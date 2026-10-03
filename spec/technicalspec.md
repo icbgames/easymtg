@@ -1,484 +1,464 @@
-# カードゲームシステム 技術仕様書
+# EasyMTG 技術仕様書
 
-## データモデル・ゲーム状態編（暫定版）
+## 1. 概要
 
-### 1. 文書概要
+### 1.1 目的
 
-本仕様書は、ブラウザ上で動作する2人対戦型カードゲームシステムについて、現時点で確定しているゲーム状態・データモデル・カード状態・Zone移動等の技術仕様を定義する。
+本仕様書は、ブラウザ上で動作する2人対戦型カードゲーム「EasyMTG」の技術仕様を定義する。
 
-本書は実装前の仕様確定を目的とした暫定版であり、未決事項については明示的に「未決」と記載する。
+本システムは、Magic: The Gathering等のカードゲームを想定した、汎用的なテーブルトップ型ゲームシステムである。
 
----
+ゲームルールを完全にシステムへ実装するのではなく、プレイヤーがカードを操作しながらゲームを進行できることを主目的とする。
 
-# 2. 基本システム構成
+### 1.2 基本方針
 
-## 2.1 想定技術スタック
-
-現時点で以下の技術スタックを採用する。
-
-| 項目       | 技術           |
-| -------- | ------------ |
-| 実行環境     | Node.js      |
-| 言語       | TypeScript   |
-| フロントエンド  | React + Vite |
-| サーバー     | Fastify      |
-| リアルタイム通信 | WebSocket    |
-| データベース   | PostgreSQL   |
-| ORM      | Drizzle ORM  |
-| バリデーション  | Zod          |
-| パッケージ管理  | pnpm         |
-| コンテナ     | Docker       |
-| テスト      | Vitest       |
-| リポジトリ構成  | Monorepo     |
-
-詳細なサーバーAPI、WebSocketプロトコル、DBスキーマ等は別途定義する。
+* ブラウザベースのWebUI
+* 中央サーバー方式
+* サーバーをゲーム状態の正とする
+* クライアントはゲーム状態を直接変更しない
+* ゲームルールによる勝敗判定は原則としてサーバーでは行わない
+* カードの配置・移動・タップ・表裏変更・カウンター変更等をプレイヤーが手動で操作する
+* 将来的な多人数対戦は想定せず、常に2人対戦とする
 
 ---
 
-# 3. システム上の主要概念
+# 2. システム構成
 
-本システムでは、以下の概念を明確に分離する。
+## 2.1 想定技術
 
-### User
+現時点での基本方針：
 
-サービス上のユーザーを表す。
+* Node.js
+* TypeScript
+* Webブラウザ
+* WebSocketによるリアルタイム通信
+* 中央サーバーによるゲーム状態管理
 
-匿名ユーザーを基本とし、ユーザー自身のゲーム内役割とは分離する。
+詳細なフレームワーク・DB・WebSocketライブラリ等は未決定。
 
-### Player
+---
 
-特定のMatchに参加しているプレイヤーを表す。
+# 3. ゲーム階層
 
-1つのUserがMatchに参加することで、そのMatch内にPlayerとしての状態を持つ。
-
-したがって、
+ゲーム構造は以下とする。
 
 ```text
-User
-  ↓ 参加
-Player
-  ↓ 所属
-Match / Game
+Room
+└─ Match
+   ├─ Game 1
+   ├─ Game 2
+   ├─ Game 3
+   ├─ Game 4
+   └─ Game 5
 ```
 
-という関係になる。
+### 3.1 Room
 
-### PlayerState
+プレイヤーが対戦するための部屋。
 
-特定のGameにおけるPlayerの現在状態。
+* Room ownerが存在する
+* Room ownerが最初にターンを開始する
+* RoomにはMatchが紐づく
+* Match終了後、Roomは自動削除される
+* Room作成時に使用するDeckを確定する
+* Match/Game開始後のDeck編集によって、進行中のゲームのDeck内容は変化しない
 
-### GameState
+### 3.2 Match
 
-1ゲーム全体の現在状態。
+1回の対戦全体を表す。
 
-### Match
+* 1つのRoomに対応する
+* 最大5 Gameから構成される
+* あるプレイヤーが最初の3 Gameを勝利していても、Game 4、Game 5を実施する
+* システムはMatchの勝敗を管理しない
 
-2人のプレイヤーによる一連のゲームを管理する単位。
+### 3.3 Game
 
-### Room
+実際の1ゲームを表す。
 
-プレイヤーがMatchを開始するために利用する待機部屋。
-
-### Card Master
-
-カードそのもののマスターデータ。
-
-### Card Instance
-
-実際のGame中に存在する、個々の物理カードに相当するオブジェクト。
-
-Card InstanceはCard Masterを参照するが、Game中の状態は独自に保持する。
-
----
-
-# 4. Room / Match / Game
-
-## 4.1 Room
-
-Roomは最大2人のプレイヤーを収容する。
-
-2人目のプレイヤーが参加するとMatchを開始する。
-
-Match終了後、Roomは自動的に削除する。
-
-したがって、Room自体はMatch終了後の履歴保持を目的としない。
-
-### Roomの状態
-
-詳細なRoom State enumは未決。
-
-ただし、Match終了後にRoomを削除するため、ゲーム終了状態をRoomに長期間保持する必要はない。
+* Gameは必ずMatchに所属する
+* standaloneなGameは存在しない
+* `gameId` はサーバーが生成する一意なID
+* Game終了後もGameStateを保持可能
+* 通常終了はプレイヤーによるConcedeのみ
+* それ以外の理由による中断・継続不能は `ABANDONED`
 
 ---
 
-## 4.2 Match
+# 4. GameState
 
-Matchは複数回のGameから構成される。
+## 4.1 概要
 
-現時点では、最大5ゲーム程度の構成を想定している。
+`GameState` は1つのGameにおける現在の完全なゲーム状態を表す。
 
-ただし、
-
-* 正確なゲーム数
-* Match終了条件
-* Matchの勝敗管理方法
-
-については未決。
-
-### Matchの勝敗
-
-サーバー/Game Serverはプレイヤーの勝敗を判定・管理しない。
-
-プレイヤー自身が勝利・敗北の結果を管理する。
-
-したがって、サーバー側でゲームルールから自動的にMatch Winnerを決定する仕様にはしない。
+* サーバーがCanonical Stateを保持する
+* クライアントはGameStateを直接変更できない
+* 永続化・復元可能な状態として設計する
+* クライアント専用のUI状態は含めない
 
 ---
 
-## 4.3 Game
+## 4.2 GameState構造
 
-GameはMatch内の1ゲームを表す。
+概念上、以下の構造とする。
 
-Game Statusは以下の3種類とする。
+```text
+GameState
+├─ gameId
+├─ matchId
+├─ status
+├─ turnNumber
+├─ activePlayerId
+├─ phase
+├─ step
+├─ players
+├─ cards
+└─ zones
+```
+
+具体的なJSON形式はWebSocket仕様策定時に確定する。
+
+---
+
+## 4.3 gameId
+
+* Gameを一意に識別するID
+* サーバーが生成する
+* 全Gameで一意
+
+---
+
+## 4.4 matchId
+
+* Gameが所属するMatchを識別する
+* 必須
+* Gameは必ず1つのMatchに所属する
+
+---
+
+## 4.5 status
+
+Gameの状態を表す。
 
 ```text
 WAITING
-IN_PROGRESS
+PLAYING
 FINISHED
+ABANDONED
 ```
 
 ### WAITING
 
-対戦相手を待っている状態。
+ゲーム開始条件を満たすまでの待機状態。
 
-### IN_PROGRESS
+### PLAYING
 
-ゲーム中。
+ゲーム進行中。
 
 ### FINISHED
 
-そのGameが終了した状態。
+プレイヤーが明示的にConcedeしたことによる正常終了。
 
-`FINISHED` はGameの状態であり、Roomの状態ではない。
+システムは以下を理由として `FINISHED` にしない。
 
-Match終了後にRoom自体が削除されるため、通常のユーザー操作ではFINISHED状態のRoomが残り続けることはない。
+* Lifeが0以下
+* Libraryが空
+* 特定の勝利条件を満たした
+* その他のゲームルール上の勝敗条件
 
----
+### ABANDONED
 
-# 5. User
+Concede以外の理由でゲームが中断され、継続不能となった状態。
 
-Userはサービス上の匿名ユーザーを表す。
-
-現時点で必要とするユーザー情報は以下。
-
-```text
-userId
-displayName
-```
-
-その他のプロフィール情報は持たない。
-
-DB上の管理のために、
-
-```text
-createdAt
-updatedAt
-```
-
-等を持たせるかどうかは実装時に決定する。
+具体的な判定条件は未決定。
 
 ---
 
-# 6. Player
+# 5. ターン管理
 
-Playerは特定のMatchにおけるUserの参加者情報。
+## 5.1 turnNumber
 
-UserとPlayerは同一概念として扱わない。
+整数値。
 
-概念上、
+* 初期値は `1`
+* ターンが変わるたびに1増加
+* プレイヤーが変わってもリセットしない
+
+例：
 
 ```text
-User
-  userId
-  displayName
-
-Player
-  playerId
-  userId
-  matchId
-  ...
+Player A: turn 1
+Player B: turn 2
+Player A: turn 3
+Player B: turn 4
 ```
-
-のように分離する。
-
-Game内のカード所有者・コントローラー等については、Playerを参照する。
 
 ---
 
-# 7. Playerの接続状態
+## 5.2 activePlayerId
 
-現時点では接続状態を以下の2種類とする。
+現在のターンプレイヤーを表す。
 
 ```text
-CONNECTED
-DISCONNECTED
+activePlayerId = playerId
 ```
 
-接続状態の詳細なタイムアウト・再接続処理等は未決。
+これは「現在操作できるプレイヤー」を意味しない。
+
+各Actionごとに実行権限を個別に判定する。
 
 ---
 
-# 8. Gameのターン情報
+## 5.3 startingPlayerId
 
-Gameは内部状態として`turnNumber`を保持する。
+GameStateには保持しない。
 
-初期値は
+Room ownerが最初のターンを開始する仕様であり、別途保持する必要がないため。
+
+---
+
+# 6. Phase / Step
+
+## 6.1 Phase
+
+```text
+BEGINNING
+PRECOMBAT_MAIN
+COMBAT
+POSTCOMBAT_MAIN
+ENDING
+```
+
+## 6.2 Step
+
+### BEGINNING
+
+```text
+UNTAP
+UPKEEP
+DRAW
+```
+
+### PRECOMBAT_MAIN
+
+```text
+null
+```
+
+### COMBAT
+
+```text
+BEGIN_COMBAT
+DECLARE_ATTACKERS
+DECLARE_BLOCKERS
+COMBAT_DAMAGE
+END_COMBAT
+```
+
+### POSTCOMBAT_MAIN
+
+```text
+null
+```
+
+### ENDING
+
+```text
+END
+CLEANUP
+```
+
+---
+
+## 6.3 ターン開始時
+
+Game開始時：
 
 ```text
 turnNumber = 1
-```
-
-とする。
-
-ターンが進行するごとにインクリメントする。
-
-ゲームルール上、特定の処理でturnNumberを参照する必要がなくても、ゲーム内部状態として保持する。
-
-Gameはまた、
-
-```text
-activePlayerId
-```
-
-等のターン関連情報を保持する想定。
-
-具体的なTurn / Phase / Stepの構造および値は未決。
-
----
-
-# 9. Card Master
-
-Card Masterはカードのマスターデータを表す。
-
-最低限、以下の情報を保持する。
-
-```text
-cardId
-name
-frontImage
-backImage
-```
-
-その他のカード固有メタデータについては未決。
-
----
-
-# 10. Card Instance
-
-Card InstanceはGame中に存在する個々のカードを表す。
-
-Card Masterとは別に、Game中の状態を保持する。
-
-基本構造として以下を想定する。
-
-```text
-instanceId
-cardId
-ownerId
-controllerId
-zone
-face
-visibility
-tapState
-counters
-position
-```
-
-### instanceId
-
-Game内のカードインスタンスを一意に識別するID。
-
-カードがZone間を移動しても、原則として同一Card Instanceとして扱う。
-
-※ Zone移動時にinstanceIdを再生成するかどうかは、正式仕様としては未決。
-
----
-
-# 11. Card InstanceのOwner / Controller
-
-Card Instanceには、
-
-```text
-ownerId
-controllerId
-```
-
-を別々に保持する。
-
-OwnerとControllerは異なる場合がある。
-
-例えば、
-
-```text
-ownerId      = Player A
-controllerId = Player B
-```
-
-という状態を許容する。
-
----
-
-# 12. Card Zone
-
-カードが存在できるZoneは以下の6種類のみとする。
-
-```text
-LIBRARY
-HAND
-BATTLEFIELD
-GRAVEYARD
-EXILE
-SIDEBOARD
-```
-
-これ以外のZoneは存在しない。
-
----
-
-# 13. Zoneごとの位置情報
-
-`position`はBATTLEFIELDに存在するカードのみが持つ。
-
-### BATTLEFIELD
-
-整数のグリッド座標として、
-
-```text
-x
-y
-```
-
-を保持する。
-
-### BATTLEFIELD以外
-
-位置情報は保持しない。
-
-概念上、
-
-```text
-BATTLEFIELD
-  position = { x, y }
-
-その他
-  position = undefined / null
-```
-
-とする。
-
-この不変条件をサーバー側でも保証する。
-
----
-
-# 14. Battlefieldのグリッド
-
-Battlefieldは自由配置ではなく、整数座標によるグリッド配置とする。
-
-UI上でのピクセル単位の位置は、グリッド座標からクライアント側で算出する。
-
-グリッドの1マスは、通常状態（UNTAPPED）のカードの長辺を基準とした正方形とする。
-
-カードがTAPPEDになった場合でも、グリッド自体のサイズ・向きは変更しない。
-
----
-
-# 15. Battlefieldへのカード配置
-
-カードをBATTLEFIELDへ移動する場合、必ず新しい`x / y`を指定する。
-
-### ドラッグ＆ドロップ
-
-カードをドラッグしてBattlefieldへ配置した場合、ドロップ位置に対応するグリッド座標を使用する。
-
-### メニュー等からの移動
-
-右クリックメニュー等からBattlefieldへ移動する場合は、あらかじめ定義された配置ルールによって自動的にグリッド座標を決定する。
-
-具体的な自動配置ルールは未決。
-
----
-
-# 16. Libraryの順序
-
-Libraryは順序を持つ。
-
-```text
-index 0 = Libraryの一番上
-```
-
-とする。
-
-したがって、index 0のカードが次にドローされるカードとなる。
-
-配列の末尾がLibraryの一番下となる。
-
-```text
-[ 0, 1, 2, 3, ... , N ]
-
-  ↑             ↑
-  TOP         BOTTOM
+activePlayerId = Room owner
+phase = BEGINNING
+step = UNTAP
 ```
 
 ---
 
-# 17. 非Battlefield Zoneの順序
+## 6.4 ターン進行
 
-BATTLEFIELD以外のZoneには座標位置を持たせない。
+サーバーによる自動進行は行わない。
 
-ただし、カードの順序は必要に応じて保持する。
+プレイヤーが明示的にActionを実行して進行させる。
 
-対象：
+ゲームルール上の通常の進行順をサーバーは強制しない。
 
-* LIBRARY
-* HAND
-* GRAVEYARD
-* EXILE
-* SIDEBOARD
+ただし、PhaseとStepの組み合わせとして不正な状態になることは防止する。
 
-具体的にどのデータ構造でZone内順序を管理するかは未決。
+---
 
-候補として、
+# 7. PlayerState
+
+## 7.1 構造
 
 ```text
-ZoneごとのCardInstanceId配列
+PlayerState
+├─ playerId
+└─ life
+```
+
+### playerId
+
+ゲーム内プレイヤーを識別する。
+
+### life
+
+プレイヤーのLife。
+
+* 初期値の具体的な設定はゲーム仕様側で定義
+* 0以下になってもGameを自動終了しない
+* 負の値を許容する
+
+Zoneの枚数等はPlayerStateに重複して保持しない。
+
+---
+
+# 8. CardInstance
+
+CardInstanceは、ゲーム中に存在する個々のカードを表す。
+
+```text
+CardInstance
+├─ cardId
+├─ cardDefinitionId
+├─ ownerPlayerId
+├─ controllerPlayerId
+├─ tapped
+├─ faceDown
+├─ position
+├─ counters
+└─ visibility
+```
+
+---
+
+## 8.1 cardId
+
+ゲーム内の個々のカードを一意に識別する。
+
+* サーバー生成
+* 同じカード定義でも別カードなら別ID
+* Zone移動しても変化しない
+* Actionでカードを指定する際に使用する
+
+---
+
+## 8.2 cardDefinitionId
+
+カード定義を参照するID。
+
+カード名・画像・カードテキスト等のカード固有情報はGameStateに直接埋め込まず、外部のカード定義で管理する。
+
+---
+
+## 8.3 ownerPlayerId
+
+カードの所有者。
+
+* ゲーム中に変更しない
+* Controllerとは独立する
+
+---
+
+## 8.4 controllerPlayerId
+
+現在のコントローラー。
+
+* Ownerと異なる場合がある
+* カード操作権限の基本判定に使用する
+
+---
+
+## 8.5 zoneId
+
+CardInstanceには保持しない。
+
+カードの所属ZoneはZone側の `cardIds` を正とする。
+
+---
+
+## 8.6 tapped
+
+```text
+true  = タップ
+false = アンタップ
+```
+
+Zone移動時には必ず `false` にリセットする。
+
+---
+
+## 8.7 faceDown
+
+```text
+true  = 裏向き
+false = 表向き
+```
+
+カード定義に専用の裏面が存在しない場合でも `faceDown = true` を設定可能。
+
+表示方法はUI側で決定し、汎用的なカード裏面等を表示できる。
+
+`faceDown` と `visibility` は独立した状態である。
+
+---
+
+## 8.8 position
+
+```text
+position:
+{
+  x: integer,
+  y: integer
+}
 ```
 
 または
 
 ```text
-CardInstance側にorder情報を持たせる
+position = null
 ```
 
-等がある。
-
-この点はDB設計時に確定する。
+* Battlefieldのみ座標を持つ
+* Battlefield以外では `null`
+* Battlefieldへ移動する際には新しい座標を必須とする
+* Drag & Dropの場合はドロップ位置を使用
+* クライアント側でピクセル座標へ変換する
 
 ---
 
-# 18. Card Face
-
-カードの表裏状態は以下の2種類。
+## 8.9 counters
 
 ```text
-FRONT
-BACK
+counters:
+{
+  plusOnePlusOne: integer,
+  other: integer
+}
 ```
+
+カウンターは2種類のみ管理する。
+
+```text
+PLUS_ONE_PLUS_ONE
+OTHER
+```
+
+`OTHER` は個別の種類を区別しない。
+
+両方とも0未満にはならない。
 
 ---
 
-# 19. Card Visibility
-
-カードの情報公開状態は以下の3種類。
+## 8.10 visibility
 
 ```text
 PUBLIC
@@ -488,551 +468,842 @@ HIDDEN
 
 ### PUBLIC
 
-すべてのプレイヤーがカード情報を確認できる。
+両プレイヤーがカード情報を閲覧可能。
 
 ### CONTROLLER_ONLY
 
-現在のControllerのみがカード情報を確認できる。
-
-Ownerではなく、あくまで現在のControllerを基準とする。
-
-したがって、
-
-```text
-ownerId != controllerId
-```
-
-の場合でも、
-
-```text
-CONTROLLER_ONLY
-```
-
-なら現在のControllerのみがカード情報を閲覧できる。
+現在のControllerのみカード情報を閲覧可能。
 
 ### HIDDEN
 
-誰もカード情報を確認できない。
+誰もカード情報を閲覧できない。
 
-`OWNER_ONLY`という状態は存在しない。
-
----
-
-# 20. Card Tap State
-
-カードのタップ状態は以下の2種類。
-
-```text
-UNTAPPED
-TAPPED
-```
-
-`UNTAPPED`をデフォルト状態とする。
+Visibility判定はOwnerではなくControllerを基準とする。
 
 ---
 
-# 21. Counters
+# 9. Zone
 
-Card Instanceはカウンター数を保持する。
+## 9.1 Zone数
 
-保持するカウンター情報は2種類のみ。
+1 Gameにつき11 Zone。
 
 ```text
-plusOnePlusOne
-other
+Player A
+├─ Library
+├─ Hand
+├─ Graveyard
+├─ Exile
+└─ Sideboard
+
+Battlefield
+
+Player B
+├─ Library
+├─ Hand
+├─ Graveyard
+├─ Exile
+└─ Sideboard
 ```
 
-### plusOnePlusOne
-
-+1/+1カウンターの個数。
-
-### other
-
-+1/+1カウンター以外のすべてのカウンターを合計した個数。
-
-個々のカウンターの種類・名称・詳細は保存しない。
+Battlefieldのみ共有Zone。
 
 ---
 
-# 22. Library View
-
-プレイヤーがLibraryを確認するためのLibrary Viewを持つ。
-
-1プレイヤーにつき、同時に1つだけLibrary Viewを保持できる。
-
-既にLibrary Viewが存在する状態で別の枚数を確認する場合、
+## 9.2 Zone構造
 
 ```text
-現在のLibrary Viewを終了
-↓
-新しいLibrary Viewを作成
+Zone
+├─ zoneId
+├─ type
+├─ ownerPlayerId
+└─ cardIds[]
 ```
 
-という扱いにする。
+### zoneId
 
-Library Viewはカードを別Zoneへ移動させる処理ではない。
+サーバー生成の一意ID。
 
-カードはLibraryに存在したままである。
+Zoneの種類やOwnerをID文字列から推測しない。
 
-Library Viewの具体的なデータ構造および閲覧可能範囲の仕様は未決。
-
----
-
-# 23. Zone移動
-
-Card InstanceをZone間で移動させる場合、基本的に以下の処理を行う。
-
-1. `zone`を移動先に変更
-2. `tapState = UNTAPPED`
-3. `face = FRONT`
-4. 移動先Zoneに応じて`visibility`を設定
-5. 移動先がBATTLEFIELDなら新しい`position`を設定
-6. 移動先Zoneに応じてCountersを維持またはリセット
-
----
-
-# 24. Zone移動時のTap State
-
-Zone移動では、移動元・移動先に関係なく必ず、
-
-```text
-tapState = UNTAPPED
-```
-
-とする。
-
-したがって、例えば、
-
-```text
-BATTLEFIELD(TAPPED)
-    ↓
-GRAVEYARD
-```
-
-の場合、
-
-```text
-GRAVEYARD(UNTAPPED)
-```
-
-となる。
-
----
-
-# 25. Zone移動時のFace
-
-Zone移動では、移動元・移動先に関係なく必ず、
-
-```text
-face = FRONT
-```
-
-とする。
-
-例えば、
-
-```text
-BATTLEFIELD(BACK)
-    ↓
-HAND
-```
-
-の場合、
-
-```text
-HAND(FRONT)
-```
-
-となる。
-
----
-
-# 26. Zone移動時のVisibility
-
-通常のZone移動では、移動先Zoneに応じてvisibilityを自動設定する。
-
-| 移動先         | デフォルトVisibility |
-| ----------- | --------------- |
-| BATTLEFIELD | PUBLIC          |
-| GRAVEYARD   | PUBLIC          |
-| EXILE       | PUBLIC          |
-| HAND        | CONTROLLER_ONLY |
-| SIDEBOARD   | CONTROLLER_ONLY |
-| LIBRARY     | HIDDEN          |
-
-ただし、これらは絶対的な制約ではない。
-
-特殊なカード移動アクションによって、デフォルトとは異なるVisibilityを明示的に指定できる。
-
-例：
-
-```text
-CONTROLLER_ONLY
-    ↓
-BATTLEFIELD
-```
-
-または、
-
-```text
-HIDDEN
-    ↓
-EXILE
-```
-
-などを許容する。
-
-したがって、
-
-「Zone移動処理のデフォルトvisibility」
-
-と
-
-「明示的に指定されたvisibility」
-
-を区別できる設計とする。
-
-具体的なAPI / Action設計は未決。
-
----
-
-# 27. Zone移動時のCounters
-
-移動先によってCountersの扱いを変更する。
-
-### 維持するZone
-
-```text
-BATTLEFIELD
-EXILE
-```
-
-移動直前のカウンター数をそのまま維持する。
-
-### リセットするZone
+### type
 
 ```text
 LIBRARY
 HAND
+BATTLEFIELD
 GRAVEYARD
+EXILE
 SIDEBOARD
 ```
 
-すべてのカウンターを0にする。
+### ownerPlayerId
 
-例えば、
+* プレイヤーZone：対応するplayerId
+* Battlefield：`null`
 
-```text
-BATTLEFIELD
-plusOnePlusOne = 3
-other = 2
-```
+### cardIds
 
-からEXILEへ移動した場合、
+Zoneに所属するCardInstanceのID一覧。
 
-```text
-EXILE
-plusOnePlusOne = 3
-other = 2
-```
-
-となる。
-
-一方、GRAVEYARDへ移動した場合、
-
-```text
-GRAVEYARD
-plusOnePlusOne = 0
-other = 0
-```
-
-となる。
+Zone側の `cardIds` をカードの所属・順序の正とする。
 
 ---
 
-# 28. Zone移動時のposition
+# 10. Zoneの順序
 
-### BATTLEFIELDへ移動
-
-新しい`x / y`を必ず設定する。
-
-移動元のpositionをそのまま引き継ぐ仕様にはしない。
-
-### BATTLEFIELDから移動
-
-BATTLEFIELD以外へ移動する場合、positionを削除する。
-
-### その他Zone間の移動
-
-positionは存在しない。
-
----
-
-# 29. Zone移動処理の基本仕様まとめ
-
-通常のZone移動を以下のように定義する。
+Battlefield以外のZoneでは `cardIds[]` の順序に意味がある。
 
 ```text
-moveCard(card, destinationZone)
-
-    zone
-      ↓
-    destinationZone
-
-    tapState
-      ↓
-    UNTAPPED
-
-    face
-      ↓
-    FRONT
-
-    visibility
-      ↓
-    destinationZoneのデフォルト値
-
-    position
-      ↓
-    BATTLEFIELDなら新規x/y
-    それ以外ならなし
-
-    counters
-      ↓
-    BATTLEFIELD / EXILE
-        → 維持
-
-    LIBRARY / HAND / GRAVEYARD / SIDEBOARD
-        → 0にリセット
+index 0 = Zoneの先頭
+last index = Zoneの末尾
 ```
 
-ただし、Visibilityについては特殊アクションによる明示的な上書きを許容する。
-
----
-
-# 30. Match開始時のDeck
-
-Match開始時には、プレイヤーが使用するDeckをコピーしてMatch用のDeck Snapshotを作成する。
-
-Match開始後にユーザーが保存済みDeckを変更しても、現在進行中のMatchには影響しない。
-
-概念上、
+Libraryについても同様。
 
 ```text
-保存済みDeck
-    ↓ Match開始
-Match Deck Snapshot
-    ↓
-Game
+cardIds[0] = 次に引くカード
 ```
 
-という関係とする。
-
-Deckの具体的なデータ構造は未決。
+Battlefieldでは `cardIds[]` の順序に意味はない。
 
 ---
 
-# 31. GameState
+# 11. Zone移動時の状態リセット
 
-GameStateは1ゲーム全体の現在状態を保持する。
+実際にZoneが変化した場合、以下を適用する。
 
-現時点では概念的に以下を含む。
-
-```text
-gameId
-matchId
-status
-turnNumber
-activePlayerId
-phase
-step
-players
-cards
-libraryViews
-```
-
-### cards
-
-Game中に存在するCard Instance群。
-
-実装上は、
+### 常にリセット
 
 ```text
-Record<CardInstanceId, CardInstance>
-```
-
-等の構造を候補とする。
-
-### players
-
-各PlayerのGame内状態。
-
-具体的なPlayerStateのフィールドは未決。
-
-### phase / step
-
-ゲームの進行状態。
-
-具体的な値・遷移ルールは未決。
-
----
-
-# 32. ゲームサーバーの基本方針
-
-ゲームサーバーは、プレイヤーの操作によってGameStateを変更する。
-
-一方で、プレイヤーの勝敗についてはサーバーがゲームルールから自動判定しない。
-
-また、カードのZone移動時におけるTap State、Face、Visibility、Countersについては、本仕様で定義された状態遷移ルールに従ってサーバー側で状態を更新する。
-
----
-
-# 33. 現時点で未決の主な事項
-
-以下は今後確定する必要がある。
-
-## データモデル
-
-* UserのDB管理項目の詳細
-* Playerの詳細フィールド
-* PlayerStateの詳細
-* Card Masterの詳細メタデータ
-* Deckのデータ構造
-* Match Deck Snapshotのデータ構造
-* Card Instance IDの生成・永続化方法
-* Card InstanceのGame終了後の扱い
-
-## Zone
-
-* 非Battlefield Zoneのカード順序をどのデータ構造で保持するか
-* 手札・墓地・追放・サイドボード等の並び替えルール
-* Zone移動時に、移動先Zoneのどの位置へカードを挿入するか
-* Libraryへのカード追加時の位置指定方法
-
-## Battlefield
-
-* メニュー等からBattlefieldへ移動する場合の自動配置ルール
-* 同一グリッド座標へのカード配置を許可するか
-* グリッドの原点・座標系
-* Battlefieldのサイズ・範囲
-
-## Card操作
-
-* Owner変更
-* Controller変更
-* Face変更
-* Tap / Untap
-* Visibility変更
-* Counter変更
-* カードの複製・生成・削除
-* カードを直接別Zoneへ移動する各種Action
-
-## Library View
-
-* Library Viewの具体的なデータ構造
-* 閲覧枚数の扱い
-* 閲覧中カードの公開範囲
-* Library View中のカード操作可否
-
-## Game進行
-
-* Phase
-* Step
-* Turn開始・終了処理
-* Active Player
-* Turnの具体的な進行方法
-* Game開始処理
-* Game終了処理
-* Match終了条件
-
-## Room / Match
-
-* Roomの詳細状態
-* Matchの最大Game数
-* Match終了条件
-* Match履歴を保存するか
-* Match終了後にどのデータをDBに残すか
-
-## 通信
-
-* WebSocketメッセージ形式
-* Client → Server Action
-* Server → Client Event
-* GameStateの初期同期
-* 差分更新方式
-* 再接続時の状態同期
-* エラー形式
-* 権限チェック
-
----
-
-# 34. 設計上の重要な不変条件
-
-実装時には、以下をサーバー側で保証する。
-
-### Card Instance
-
-```text
-BATTLEFIELD
-    → position必須
-
-BATTLEFIELD以外
-    → positionなし
-```
-
-### Zone移動
-
-```text
-Zone移動後
-    tapState = UNTAPPED
-    face = FRONT
+tapped = false
+faceDown = false
 ```
 
 ### Visibility
 
-通常移動では移動先Zoneのデフォルト値を使用する。
+移動先Zoneのデフォルト値にする。
 
-ただし、明示的な特殊アクションによる上書きを許可する。
+| Zone        | Default Visibility |
+| ----------- | ------------------ |
+| Battlefield | PUBLIC             |
+| Graveyard   | PUBLIC             |
+| Exile       | PUBLIC             |
+| Hand        | CONTROLLER_ONLY    |
+| Sideboard   | CONTROLLER_ONLY    |
+| Library     | HIDDEN             |
+
+特殊な操作による上書きについてはAction仕様で定義する。
+
+### Position
+
+* Battlefield：新しい `x/y` を設定
+* その他：`null`
 
 ### Counters
 
-```text
-BATTLEFIELD / EXILE
-    → 維持
+移動先によって処理が異なる。
 
-その他
-    → 0
+| 移動先         | Counters |
+| ----------- | -------- |
+| Battlefield | 維持       |
+| Exile       | 維持       |
+| Library     | 0にリセット   |
+| Hand        | 0にリセット   |
+| Graveyard   | 0にリセット   |
+| Sideboard   | 0にリセット   |
+
+例えば、
+
+```text
+Battlefield → Exile
 ```
 
-### Library
+ではCounterを維持する。
+
+その後、
 
 ```text
-index 0 = TOP
-array末尾 = BOTTOM
+Exile → Graveyard
 ```
 
-### Controller Only
+とした場合はCounterを0にする。
+
+---
+
+# 12. 同一Zone内の並び替え
+
+同じNon-Battlefield Zone内でカードの順序を変更できる。
+
+使用Action：
 
 ```text
+ReorderCard
+├─ cardId
+├─ zoneId
+└─ insertIndex
+```
+
+* Battlefieldでは使用不可
+* 指定Zoneにカードが存在する必要がある
+* `insertIndex` は必須
+* `0` = 先頭
+* `cardIds.length` = 末尾
+* 任意の位置へ移動可能
+* Zone移動ではないためCardInstanceの状態をリセットしない
+
+---
+
+# 13. Action
+
+## 13.1 基本原則
+
+基本的に、
+
+> 1 Action = 1種類のState Change
+
+とする。
+
+ただし、PhaseとStepは一体となった「Turn Position」として扱うため、`ChangeTurnPosition` のみPhaseとStepの2項目を同時変更する。
+
+複数の独立した状態変更が必要な場合は、複数Actionを順番に実行する。
+
+---
+
+# 14. MoveCard
+
+```text
+MoveCard
+├─ cardId
+├─ destinationZoneId
+├─ insertIndex?
+└─ position?
+   ├─ x
+   └─ y
+```
+
+## 権限
+
+基本的には対象カードの現在のController。
+
+## 移動先がNon-Battlefieldの場合
+
+```text
+position = 指定不可
+insertIndex = 任意
+```
+
+`insertIndex` を省略した場合は `0`（先頭）。
+
+## 移動先がBattlefieldの場合
+
+```text
+position = 必須
+insertIndex = 指定不可
+```
+
+## その他
+
+* 現在Zoneはクライアントから指定しない
+* サーバーがCardInstanceとZoneの状態から特定する
+* 任意の現在Zoneから任意のZoneへの移動を基本的に許可
+* 実際のゲームルール上の合法性はサーバーでは判定しない
+* 同一Zone内の並び替えには `ReorderCard` を使用する
+
+Zone移動時の状態リセットを適用する。
+
+---
+
+# 15. ReorderCard
+
+```text
+ReorderCard
+├─ cardId
+├─ zoneId
+└─ insertIndex
+```
+
+* Non-Battlefieldのみ
+* 基本権限：現在のController
+* 任意位置への並び替え
+* Zone移動ではない
+* 状態リセットなし
+
+---
+
+# 16. TapCard / UntapCard
+
+```text
+TapCard
+└─ cardId
+
+UntapCard
+└─ cardId
+```
+
+* `TapCard`：`tapped = true`
+* `UntapCard`：`tapped = false`
+* 既に目的状態でもエラーとしない
+* 基本権限：現在のController
+* Zone移動ではない
+
+---
+
+# 17. TurnFaceDown / TurnFaceUp
+
+```text
+TurnFaceDown
+└─ cardId
+
+TurnFaceUp
+└─ cardId
+```
+
+* `TurnFaceDown`：`faceDown = true`
+* `TurnFaceUp`：`faceDown = false`
+* 専用の裏面が存在しないカードでも使用可能
+* 既に目的状態でもエラーとしない
+* Visibilityとは独立
+* 基本権限：現在のController
+
+---
+
+# 18. AddCounter / RemoveCounter
+
+```text
+AddCounter
+├─ cardId
+├─ counterType
+└─ amount
+
+RemoveCounter
+├─ cardId
+├─ counterType
+└─ amount
+```
+
+### counterType
+
+```text
+PLUS_ONE_PLUS_ONE
+OTHER
+```
+
+### amount
+
+正の整数。
+
+### AddCounter
+
+指定数量を加算。
+
+### RemoveCounter
+
+指定数量を減算。
+
+現在値を超える数量を削除しようとした場合は拒否する。
+
+Counterの意味そのものはシステムでは解釈しない。
+
+基本権限：現在のController。
+
+---
+
+# 19. ChangeController
+
+```text
+ChangeController
+├─ cardId
+└─ controllerPlayerId
+```
+
+* `controllerPlayerId` はゲーム内のプレイヤー
+* Ownerは変更しない
+* Controllerのみ変更する
+* 基本権限：現在のController
+* ゲームルール上、Control Changeが合法かどうかは判定しない
+* Zone移動ではない
+* その他のCardInstance状態を変更しない
+
+---
+
+# 20. ChangeVisibility
+
+```text
+ChangeVisibility
+├─ cardId
+└─ visibility
+```
+
+指定可能な値：
+
+```text
+PUBLIC
 CONTROLLER_ONLY
-    → ownerではなくcontrollerのみ閲覧可能
+HIDDEN
+```
+
+* 基本権限：現在のController
+* 同じVisibilityへの変更も許可
+* Zone移動ではない
+* `faceDown`とは独立
+* ゲームルール上の合法性は判定しない
+
+---
+
+# 21. MoveCardPosition
+
+```text
+MoveCardPosition
+├─ cardId
+└─ position
+   ├─ x
+   └─ y
+```
+
+* Battlefield上のカードのみ
+* `x/y` は整数
+* 基本権限：現在のController
+* Positionのみ変更
+* Zone移動ではない
+* その他の状態を変更しない
+* 座標のゲームルール上の妥当性はサーバーでは判定しない
+
+---
+
+# 22. ChangeLife
+
+```text
+ChangeLife
+├─ playerId
+└─ amount
+```
+
+* `amount > 0`：Life増加
+* `amount < 0`：Life減少
+* Lifeは負の値になってもよい
+* Life 0によるGame終了は行わない
+* **自分自身のLifeのみ変更可能**
+* `executingPlayerId == playerId` が必須
+
+`amount = 0` の扱いは未決定。
+
+---
+
+# 23. ShuffleZone
+
+```text
+ShuffleZone
+└─ zoneId
+```
+
+* Battlefieldでは使用不可
+* Zone全体の `cardIds[]` をランダムに並び替える
+* CardInstance自体の状態は変更しない
+* 基本権限：
+
+  * `Zone.ownerPlayerId == executingPlayerId`
+* Battlefieldのように `ownerPlayerId = null` のZoneには使用不可
+
+主な用途はLibraryのシャッフル。
+
+---
+
+# 24. ChangeTurnPosition
+
+```text
+ChangeTurnPosition
+├─ phase
+└─ step
+```
+
+* PhaseとStepを同時に変更
+* Phaseは必須
+* Stepは、そのPhaseがStepを持つ場合は必須
+* Main Phaseでは `step = null`
+* Phase/Stepの不正な組み合わせは拒否
+* 通常のゲームルール上の進行順は強制しない
+* Active Playerは任意の有効なTurn Positionへ移動可能
+* サーバーによる自動進行は行わない
+* 基本権限：Active Player
+
+---
+
+# 25. EndTurn
+
+```text
+EndTurn
+└─ no args
+```
+
+基本権限：Active Player。
+
+サーバーが一つのActionとして以下を変更する。
+
+```text
+turnNumber += 1
+activePlayerId = other player
+phase = BEGINNING
+step = UNTAP
+```
+
+以下は自動実行しない。
+
+* Untap
+* Upkeep
+* Draw
+* その他のゲームルール処理
+* 勝敗判定
+
+---
+
+# 26. Concede
+
+```text
+Concede
+└─ no args
+```
+
+実行したプレイヤー自身が投了する。
+
+成功時：
+
+```text
+status = FINISHED
+```
+
+GameStateには以下を保持しない。
+
+```text
+winnerPlayerId
+loserPlayerId
+concedingPlayerId
+```
+
+Concede後は通常のGame Actionを実行できない。
+
+---
+
+# 27. StartGame
+
+Game開始処理。
+
+```text
+StartGame
+└─ no args
+```
+
+通常のPlayer Actionではなく**システムAction**。
+
+`WAITING` のGameに対して実行する。
+
+実行時：
+
+```text
+status = PLAYING
+turnNumber = 1
+activePlayerId = Room owner
+phase = BEGINNING
+step = UNTAP
+```
+
+さらに、
+
+* 各プレイヤーのLibraryをシャッフル
+* 各プレイヤーが7枚引く
+
+を行う。
+
+StartGame後、通常のGame Actionが実行可能になる。
+
+### 未決定
+
+* StartGame内部での初期7枚のDraw処理を、内部的な`DrawCard`として扱うか、StartGameが直接Stateを変更するか
+* WAITINGからPLAYINGへ移行できる具体的条件
+
+これらは後のCommand/EventおよびRoom/Match/Game lifecycle設計で決定する。
+
+---
+
+# 28. DrawCard
+
+```text
+DrawCard
+├─ playerId
+└─ amount
+```
+
+指定プレイヤーがLibraryからカードを引く。
+
+* `amount` は正の整数
+* Libraryの `cardIds[0]` から順番に取り出す
+* Handへ追加する
+* 引いたカードは通常のZone移動時リセットを適用する
+* Libraryの順序は維持され、先頭から削除する
+* Handへの追加位置は現時点では末尾とする
+
+### 未決定
+
+Libraryのカード枚数が不足している場合の処理。
+
+また、誰が他プレイヤーを対象としたDrawCardを実行できるかについて、詳細な例外権限は未決定。
+
+---
+
+# 29. Mulligan
+
+```text
+Mulligan
+└─ no args
+```
+
+実行プレイヤー自身のHandを対象とする。
+
+処理：
+
+1. Handの全カードを自身のLibraryへ戻す
+2. Libraryをシャッフルする
+3. Libraryから7枚引く
+
+Zone移動に伴う通常の状態リセットを適用する。
+
+他プレイヤーのカードには影響しない。
+
+### 未決定
+
+* Libraryが7枚未満の場合の処理
+* Mulliganを実行できるタイミングをサーバーがどこまで検証するか
+* Mulligan回数に応じた手札枚数変更など、詳細なMulliganルール
+
+---
+
+# 30. Actionの権限
+
+基本的な権限はActionごとに定義する。
+
+現在の基本権限：
+
+| Action             | 基本権限          |
+| ------------------ | ------------- |
+| MoveCard           | 現在のController |
+| ReorderCard        | 現在のController |
+| TapCard            | 現在のController |
+| UntapCard          | 現在のController |
+| TurnFaceDown       | 現在のController |
+| TurnFaceUp         | 現在のController |
+| AddCounter         | 現在のController |
+| RemoveCounter      | 現在のController |
+| ChangeController   | 現在のController |
+| ChangeVisibility   | 現在のController |
+| MoveCardPosition   | 現在のController |
+| ChangeLife         | 対象Player自身    |
+| ShuffleZone        | ZoneのOwner    |
+| ChangeTurnPosition | Active Player |
+| EndTurn            | Active Player |
+| Concede            | 実行Player自身    |
+| StartGame          | システム          |
+| DrawCard           | 詳細未決定         |
+| Mulligan           | 実行Player自身    |
+
+将来的に特定Actionについて例外的な権限を追加可能とする。
+
+---
+
+# 31. Actionとゲームルール
+
+本システムは、テーブルトップ型の自由度を優先する。
+
+そのため、サーバーは原則として以下を判定しない。
+
+* カード効果の合法性
+* MTG等のルール上の合法性
+* 攻撃・ブロックの成立条件
+* Life 0による敗北
+* Library枯渇による敗北
+* 特殊勝利条件
+* Control Changeの合法性
+* カードを特定のZoneへ移動できるかというゲームルール上の制約
+* カードを特定の座標へ配置できるかというゲームルール上の制約
+
+ただし、システム構造を壊す不正なStateやActionはサーバー側で拒否する。
+
+例：
+
+* 存在しないcardId
+* 存在しないzoneId
+* 不正なPhase/Step組み合わせ
+* BattlefieldでないカードへのMoveCardPosition
+* BattlefieldへのMoveCardでpositionが未指定
+* Non-BattlefieldへのMoveCardでpositionを指定
+* Counterが負になるRemoveCounter
+* 存在しないPlayerへのController変更
+
+---
+
+# 32. Read / View操作
+
+カードを見る、Libraryの上から一定枚数を確認する等の操作は、カードのZone移動を伴わない場合、State Change Actionとは別の概念として扱う。
+
+したがって、
+
+> Action = Stateを変更する操作
+
+とし、
+
+> View / Read = Stateを変更せず、許可された情報を取得する操作
+
+として分離する方針とする。
+
+### 未決定
+
+具体的なView/Read API、および以下の詳細は今後決定する。
+
+* Libraryの上からN枚を見る
+* Handを見る
+* Graveyardを見る
+* Exileを見る
+* Sideboardを見る
+* 相手のHidden Zoneについて枚数だけ取得する
+* 閲覧中のカード情報をどの形式でクライアントへ送信するか
+
+---
+
+# 33. 現時点で未決定の主要事項
+
+以下は今後決定する。
+
+## Game Lifecycle
+
+* Room作成からMatch開始までの詳細
+* WAITING → PLAYINGの具体的条件
+* Game終了後のMatch進行
+* Match終了条件
+* ABANDONEDとなる具体的条件
+* Disconnect / Reconnectの扱い
+
+## Command / Event
+
+* Commandの形式
+* Eventの形式
+* ActionとCommandの対応
+* State変更の通知方法
+* Event履歴を保存するか
+* Event Sourcingを採用するか
+
+## WebSocket
+
+* 接続確立
+* 認証
+* Client → Server Message形式
+* Server → Client Message形式
+* GameState同期
+* 差分更新
+* 再接続時のState同期
+
+## Private Information
+
+* Playerごとに異なるGameState View
+* Hiddenカード情報のマスキング方法
+* 相手のHand / Library / Sideboardの表示
+* Libraryの閲覧API
+* 一時的に公開されるカード情報の扱い
+
+## Database
+
+* 使用DB
+* Room保存
+* Match保存
+* Game保存
+* Deck保存
+* GameState保存方式
+* Event保存方式
+
+## Session / Authentication
+
+* Anonymous User IDの発行
+* Cookie等への保存
+* Browser変更時の扱い
+* Session有効期限
+* Reconnect
+* 複数タブからの接続
+
+## Deck
+
+* Deckデータ構造
+* Mainboard / Sideboardの永続化形式
+* Deck編集API
+* Save処理
+* Deck Validation
+* Room作成時のDeck Snapshot処理
+
+## UI
+
+* Battlefield表示
+* カードドラッグ＆ドロップ
+* Context Menu
+* Zone表示
+* Hidden Zone表示
+* Counter操作UI
+* Turn / Phase操作UI
+* Gameログ
+* Library View
+
+---
+
+# 34. 現時点のAction一覧
+
+現在定義済みのActionは以下。
+
+### Card
+
+```text
+MoveCard
+ReorderCard
+TapCard
+UntapCard
+TurnFaceDown
+TurnFaceUp
+AddCounter
+RemoveCounter
+ChangeController
+ChangeVisibility
+MoveCardPosition
+```
+
+### Player / Game
+
+```text
+ChangeLife
+ShuffleZone
+ChangeTurnPosition
+EndTurn
+Concede
+DrawCard
+Mulligan
+```
+
+### System
+
+```text
+StartGame
 ```
 
 ---
 
-# 35. 現時点の設計状況
+# 35. 今後の仕様策定順
 
-本書の内容は、現在までの確認事項を基にした**データモデル・ゲーム状態仕様の暫定確定版**とする。
+今後は以下の順序で詳細化する。
 
-今後は、未決事項を順番に確認した上で、
+1. GameState / PlayerState / CardInstance
+2. Zone内部仕様
+3. Action
+4. Command / Event
+5. WebSocket
+6. Private Information View
+7. Room / Match / Game Lifecycle
+8. Database
+9. Authentication / Session / Reconnect
+10. Library View / Read操作
+11. UI
 
-1. データモデル確定
-2. TypeScript型定義
-3. PostgreSQL / Drizzle DB設計
-4. Game Action仕様
-5. WebSocket通信仕様
-6. Server側の状態管理
-7. Client側の状態管理
-8. API仕様
-9. UI仕様
-
-の順に詳細化する。
+現時点では1～3の主要部分を策定済みであり、次にCommand / EventおよびRead/View境界の具体化へ進む。
