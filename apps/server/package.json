@@ -1,0 +1,31 @@
+{
+  "name": "@easymtg/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file=../../.env --import tsx --watch src/index.ts",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:migrate": "node --env-file=../../.env --import tsx src/db/migrate.ts",
+    "test:db": "node --env-file=../../.env --import tsx ../../node_modules/vitest/vitest.mjs run src/db/session-repository.integration.test.ts src/db/card-definition-repository.integration.test.ts src/db/deck-repository.integration.test.ts src/db/room-repository.integration.test.ts src/db/game-repository.integration.test.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@easymtg/game": "workspace:*",
+    "@easymtg/shared": "workspace:*",
+    "@fastify/static": "^10.1.6",
+    "@fastify/websocket": "^11.2.0",
+    "drizzle-orm": "^0.45.4",
+    "fastify": "^5.6.2",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

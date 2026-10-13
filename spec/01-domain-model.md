@@ -53,13 +53,22 @@ Room の主な情報：
 - 参加 Player（最大 2 名）
 - 各 Player の選択 Deck
 - `matchId`（Match 作成後）
-- Room 状態（具体的な enum は実装時に共有 schema で定義）
+- Room 状態：`WAITING` / `IN_MATCH`
+
+Room の状態と参加人数は次のとおり：
+
+- `WAITING` は Owner だけが参加している状態。
+- 2 人目の参加確定と同時に Match / Game 1 を開始し、Room を `IN_MATCH` にする。2 人参加の `WAITING` Room は通常の確定状態として公開しない。
+- `IN_MATCH` は 2 Player が参加し、`matchId` を持つ状態。
+- `WAITING` 中の退出で参加者が残らなければ Room を削除する。退出後に参加者が残る状態を処理する必要がある場合は、その Player に Owner を移譲して Room を維持する。ただし、現在の2人対戦・自動開始フローではこの状態は通常発生しない。
+- `IN_MATCH` 中の退出は認めず、一時切断として扱う。Match 終了時に Room を削除する。
 
 Room owner の責務：
 
-- 2 人参加済み、Deck 有効、適切な状態などの条件を満たす場合に StartMatch / StartGame を要求できる。
+- 2 人目の Player が有効な Deck を選択して入室すると、Match と Game 1 は自動で開始する。
+- Game 1〜4 終了後、Deck 選択・Sideboard 変更を経て、次 Game の開始を要求できるのは Room owner のみ。
 - Game 中に owner が切断しても特別な勝敗処理は行わない。
-- owner が Room を退出した場合、残った Player に owner を移譲する。
+- Waiting Room の owner が退出し Player が残る場合、Room を維持して残った Player に owner を移譲する。退出後に Player が残らない場合は Room を削除する。
 - owner は Game の勝敗や相手の操作を強制変更できない。
 
 ## 4. Match
@@ -68,7 +77,7 @@ Room owner の責務：
 - Game 1〜5 を順に実施する。
 - システムは勝敗を集計・保存しない。
 - Game 5 終了後に Match を終了し、Room を自動削除する。
-- Match は現在の Game 番号と状態を保持する。
+- Match status は `ACTIVE` / `ENDED`。Match は現在の Game 番号と状態を保持し、進行中 Game がある場合は `activeGameId` を保持する。
 - Match にサーバー判定の勝敗情報を持たせない。
 
 ## 5. Game
@@ -93,7 +102,7 @@ Room owner の責務：
 - 保存は明示的な Save 操作のみ。自動保存しない。
 - Mainboard は上限なし、同一カードの枚数制限なし。保存時に 60 枚以上を必須とする。
 - 編集途中で Mainboard が 60 枚未満でもよいが、その Deck で Room 作成・参加はできない。
-- Sideboard は上限なし、同一カードの枚数制限なし。Mainboard + Sideboard の合計上限は設けない。
+- Sideboard は 0〜15 枚、同一カードの枚数制限なし。Mainboard + Sideboard の合計上限は設けない。
 - 各 Game 開始時点で Mainboard が 60 枚以上でなければならない。
 - Deck には Card Definition ID の配列を保存し、Card Definition Version は保存しない。
 - Deck 編集中の検索・表示・ソートは Card Definition の最新 Version を使う。

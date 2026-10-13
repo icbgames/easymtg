@@ -73,7 +73,7 @@ Version 更新と Status 変更を同時に行う原子的な管理操作も提�
 - 同一 `requestId` で内容が異なる場合は `REQUEST_ID_CONFLICT`。
 - 成功・失敗のどちらも処理結果を記録する。
 - Version 競合などの失敗結果も再送時には同じ結果を返す。内容を変えて再試行する場合は新しい ID を使う。
-- 保存期間は再送を安全に処理できる期間を保証する。具体値と古い記録の削除方法は実装時に決定。
+- 冪等性結果の保証期間は作成から30日。30日経過後は記録を削除でき、それ以降の再送について同じ結果は保証しない。Clientは期限後もrequestIdを再利用せず、新しい操作には新しいIDを使う。
 - 同一 requestId の同時処理でも二重実行しない。
 - requestId 記録とカードマスター変更は可能な限り同一 DB transaction で確定する。
 - 単一 transaction にできない処理は再送時に安全に復旧できる設計とする。
@@ -125,4 +125,4 @@ Version 更新と Status 変更を同時に行う原子的な管理操作も提�
 - `INVALID_IMAGE_URL`
 - `PAYLOAD_TOO_LARGE`
 
-コードの完全な一覧は実装時に shared schema とともに確定する。
+共通HTTP errorCodeとHTTP statusの割当は `11-security-and-errors.md` を参照する。管理API固有の上記codeもその対応に従う。

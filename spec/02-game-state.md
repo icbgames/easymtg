@@ -28,6 +28,10 @@ type GameState = {
 
 実装時の正確な型は `packages/shared` と `packages/game` の schema に集約する。
 
+Player別Viewの実装schemaは`packages/game`の`GameStateViewSchema`に置く。GameStateのmetadata / PlayerStateは保持し、Zone内カードは識別情報を閲覧できる場合に限り`cardId`、`cardDefinitionId`、`cardDefinitionVersion`を含める。閲覧できないカードは識別子を持たない匿名項目として枚数分だけ出し、owner/controller、tapped、faceDown、position、countersのみを含める。`visibility`自体はViewへ含めない。GameStateViewにViewStateやそのprivate card detailsを混在させない。
+
+Player別Viewの実装schemaは`packages/game`の`GameStateViewSchema`に置く。GameStateのmetadata / PlayerStateは保持し、Zone内カードはカード情報を閲覧できる場合に限り`cardId`、`cardDefinitionId`、`cardDefinitionVersion`を含める。閲覧できないカードは識別子を持たない匿名項目として枚数分だけ出し、owner/controller、tapped、faceDown、position、countersのみを含める。`visibility`自体はViewへ含めない。
+
 ## 2. PlayerState
 
 - `playerId`
@@ -65,10 +69,13 @@ Life はプレイヤー自身が管理する。
 - `PUBLIC`: 両 Player がカード情報を閲覧可能。
 - `CONTROLLER_ONLY`: Controller のみカード情報を閲覧可能。
 - `HIDDEN`: カードの識別情報を誰にも公開しない。
+- 専用の裏面がないカードも裏向きにできる。
 
 ### Position
 
 - Battlefield のみ整数座標を持つ。
+- Battlefield の原点は左上 `(0,0)`。xは右、yは下へ増加し、負座標は許可しない。
+- Battlefield は盤面サイズに上限を設けず、複数カードの同一座標を許可する。
 - Battlefield へ移動する場合は新しい座標が必須。
 - Drag & Drop はドロップしたグリッド座標を送る。
 - 画面上のピクセル座標への変換はクライアント側。
@@ -123,6 +130,7 @@ type Zone = {
 - Hidden Card の移動はカード ID ではなく、Zone、index、位置、枚数などの公開可能情報で表す。
 - Hidden Card View では owner/controller、tapped、faceDown、position、counters などの公開可能なゲーム状態は表現できるが、カード識別情報は含めない。
 - View では `visibility` 自体を送信しない。
+- 識別情報の可否はZone規則を先に適用する。Libraryは有効な閲覧中のViewerのみ、Hand / SideboardはOwnerのみが識別できる。その他のZoneは`visibility`に従う。`faceDown`は独立した表示状態であり、この仕様では単独で識別情報の公開範囲を変更しない。
 
 ## 6. Zone 移動時のリセット
 
@@ -133,6 +141,7 @@ type Zone = {
 - `visibility` は移動先 Zone の既定値
 - Battlefield なら新しい `position`、それ以外は `null`
 - Counter は移動先によって扱いが異なる
+- 戦場から別 Zone へ移動した場合、`controllerPlayerId` を `ownerPlayerId` に戻す。
 
 | 移動先 | Counter |
 |---|---|

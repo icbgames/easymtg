@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 560" role="img" aria-label="Card image unavailable">
+  <defs><linearGradient id="g" x2="0" y2="1"><stop stop-color="#344a55"/><stop offset="1" stop-color="#182630"/></linearGradient></defs>
+  <rect x="8" y="8" width="384" height="544" rx="22" fill="url(#g)" stroke="#71858d" stroke-width="7"/>
+  <rect x="30" y="30" width="340" height="500" rx="14" fill="none" stroke="#aab9bd" stroke-opacity=".35" stroke-width="2"/>
+  <circle cx="200" cy="220" r="76" fill="#1e3039" stroke="#90a8a8" stroke-opacity=".6" stroke-width="4"/>
+  <path d="M155 225 188 190 215 218 236 200 265 250H140Z" fill="#93aaab" fill-opacity=".72"/>
+  <circle cx="222" cy="187" r="11" fill="#d8c47e"/>
+  <text x="200" y="355" text-anchor="middle" font-family="system-ui,sans-serif" font-size="25" font-weight="700" fill="#d6e0df">画像を表示できません</text>
+  <text x="200" y="392" text-anchor="middle" font-family="system-ui,sans-serif" font-size="20" fill="#a5b5b9">EasyMTG</text>
+</svg>

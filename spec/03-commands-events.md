@@ -22,9 +22,11 @@ type CommandEnvelope = {
 
 - `playerId` は Command から信用せず、接続 Session / User / Room の対応からサーバーが特定する。
 - `commandId` は Game sequence とは別。
-- `commandId` は Game をまたいでグローバルに一意。
-- 同一 `commandId` の処理済み Command は再実行しない。以前の CommandResult を再送できる。
-- 処理済み Command と CommandResult は Game 終了まで保持し、Game 終了後に破棄可能。
+- `commandId` はClientがGame / Sessionをまたいでグローバルに一意な値を生成し、再利用しない。Serverはreceiptを保持している期間、DBの一意制約で重複を検出する。
+- 同一 `commandId` の処理済み Command は再実行しない。Game、実行者、Command type、payloadがすべて同じ再送には以前のCommandResultを返す。
+- 同一 `commandId` を異なるGame、実行者、Command type、payloadで再利用した場合は `COMMAND_ID_CONFLICT` を返す。元Commandの結果や状態を変更せず、新しいCommandも処理しない。
+- 同一 `commandId` の処理が進行中に完全一致する再送があれば、処理完了を待って以前のCommandResultを返す。内容が異なる同時要求は `COMMAND_ID_CONFLICT` とする。
+- 処理済み Command と CommandResult は Game 終了まで保持し、Game 終了時に破棄する。Game終了後に同じcommandIdを送った場合、以前の結果の再送は保証しない。
 - 後続 Game では新しい `commandId` を使用する。
 
 ## 3. CommandResult
@@ -42,6 +44,7 @@ type CommandResult = {
 
 - 成功時は最小限の結果だけ返す。状態変更の詳細は Game Event で通知する。
 - 失敗時は `success=false` と機械判定可能な `errorCode` を返す。
+- `errorCode` は `spec/11-security-and-errors.md` のCommand catalogにある固定値に限る。
 - HTTP API の `{ error: ... }` 形式とは別のプロトコル形式。
 - 送信者には CommandResult を先に送り、その後 Game Event を送る。
 - 相手には Game Event のみ送る。
@@ -49,7 +52,7 @@ type CommandResult = {
 
 ## 4. 処理順序・原子性
 
-Command は次の順で処理する：
+エンドツーエンドではCommandを次の順で処理する：
 
 1. 受信
 2. Envelope / payload の形式検証
@@ -63,12 +66,21 @@ Command は次の順で処理する：
 10. 永続化
 11. CommandResult と Event を配信
 
+フェーズ境界：
+
+- Phase 4 は、Sessionから確定済みの `gameId` / `actorPlayerId` を受け取るGame内processorを実装する。Envelope / payload検証、重複判定、Game単位の直列化、権限・状態検証、Canonical GameState / Event / sequence の一貫したメモリ上の確定、およびCommandProcessingResponse生成までを対象とする。現在のprocessorの接続状態入力はPlayer単位のadapter APIまでであり、Session集合からの集約は含めない。
+- SessionからのUser / Player / Room / Game特定、WebSocket受信順序、CommandResult/Eventの配信と順序保証、切断検出・Player接続集約はPhase 7で行う。processorが返すCanonical Eventは内部用であり、Transportから直接クライアントへ送信しない。
+- DB transactionによるGameState / Event / sequence / command結果の永続化はPhase 7で行う。Phase 4のメモリ確定はプロセス再起動を越える耐久性を保証しない。
+- Player別GameStateViewおよびEvent payloadの秘匿情報maskingはPhase 5で行う。Phase 7のTransportは、Phase 5で生成したPlayer向けViewのみ配信する。
+- HTTP APIエラー形式・routeへの適用はHTTP APIを実装するPhase 7の対象であり、Command processorの責務に含めない。
+
 - 失敗した Command は状態を変更せず、sequence を消費しない。
 - Event を確定した後の配信失敗は、確定した状態変更を取り消さない。
 - Game ごとに直列処理する。
 - B の結果を待たずに C が送信されても、サーバーは受信順に処理する。
 - B が成功すれば C は B 後の状態を見る。B が失敗すれば C は B 前の状態を見る。
 - 1 Command の失敗で後続 Command を停止しない。
+- どちらか一方の Player が切断中は、Command を失敗として扱い GameState / sequence を変更しない。
 - クライアントは未確定の結果を成功と仮定して状態変更を確定しない。
 
 ## 5. Game Event
@@ -102,6 +114,16 @@ type GameEventView = {
 - 同一 Session で sequence の回帰を起こさない。
 - Ping/Pong、Welcome、CommandResult、InitialState、View Notification、Lifecycle Event は Game sequence を消費しない。
 
+### Game操作CommandのEvent形式
+
+- 状態を変更したGame操作Commandは、`eventType` を `<CommandType>Applied` とする。例：`MoveCardApplied`、`ChangeLifeApplied`。
+- Canonical Event payload は `{ actorPlayerId, commandPayload }`。payloadなしCommandの `commandPayload` は `null`。
+- `ShuffleZoneApplied` は上記に加えて、シャッフル後のZone全体の順序を `cardIds` に含める。これにより確定した乱数結果を記録し、イベントから同じ状態を再現できる。
+- `ConfirmViewApplied` は上記に加えて、閲覧・並べ替え・移動後のsource Zone全体の順序を`sourceZoneCardIds`に含める。ViewState内の並べ替え結果もCanonical Eventから再現可能にする。
+- Canonical EventはGameState変更を再現するための記録であり、そのままクライアントへ送らない。Player向けEvent ViewでHidden / Controller専用情報をマスキングする。
+- Phase 5のEvent Viewは、配信時点のGameStateで受信者が識別できないカードの`cardId`と`cardDefinitionId`を、payloadのobject key / valueおよび配列から除去する。Canonical EventとEvent Viewを混同しない。
+- Commandが成功してもGameStateに差分がなければEventを生成せず、sequenceも増やさない。
+
 ## 6. Event 発行と配信
 
 - Canonical Event を生成し、その後 Player ごとの Event View に変換する。
@@ -134,10 +156,32 @@ type GameEventView = {
 
 ViewState 用 Command は `06-view-state.md` を参照する。
 
+### Command payload schema
+
+以下を各 payload の確定形とする。すべての object は列挙した field だけを許可し、未知 field は拒否する。ID は該当する GameCardId / ZoneId / PlayerId、座標は整数 `x`,`y` とする。必須 payload を省略した場合、および payload を持たない Command に payload を付けた場合は `INVALID_PAYLOAD` とする。
+
+| Command | payload |
+| --- | --- |
+| `MoveCard` | `{ cardId, destinationZoneId, position?, insertIndex? }` |
+| `ReorderCard` | `{ cardId, insertIndex }` |
+| `TapCard` / `UntapCard` / `TurnFaceDown` / `TurnFaceUp` | `{ cardId }` |
+| `AddCounter` / `RemoveCounter` | `{ cardId, counterType, amount }`。`counterType` は `PLUS_ONE_PLUS_ONE` / `OTHER`、`amount` は正の整数。 |
+| `ChangeController` | `{ cardId, controllerPlayerId }` |
+| `ChangeVisibility` | `{ cardId, visibility }`。`visibility` は `PUBLIC` / `CONTROLLER_ONLY` / `HIDDEN`。 |
+| `MoveCardPosition` | `{ cardId, position: { x, y } }` |
+| `ChangeLife` | `{ amount }`。整数。0は`INVALID_AMOUNT`として拒否する。 |
+| `ShuffleZone` | `{ zoneId }` |
+| `ChangeTurnPosition` | `{ phase, step }`。phase / step は GameState の列挙値。step は `null` を許す。 |
+| `EndTurn` / `Concede` | payload なし（envelopeから省略）。 |
+
+`MoveCard` の `position` と `insertIndex` は同時に指定できない。移動先が Battlefield なら `position` 必須、`insertIndex` 不可。それ以外なら `position` 不可、`insertIndex` は省略時 `0`。移動先Zoneの実体に依存する条件は、サーバーがGameStateを参照して検証する。
+
+ViewState Command のpayloadは `06-view-state.md` に定義する。
+
 ### MoveCard
 
 - 現在 Zone はクライアントから指定せず、サーバーが状態から特定する。
-- 基本権限は現在 Controller。
+- Battlefield 上のカードは現在 Controller、Battlefield 以外のカードは Owner が移動する。非戦場Zone間ではOwnerのZoneへ移動できる。
 - Non-Battlefield への移動は `position` を指定不可、`insertIndex` は任意。省略時 `0`。
 - Battlefield への移動は `position{x,y}` 必須、`insertIndex` は指定不可。
 - Zone 移動時のリセット規則を適用する。
@@ -180,7 +224,7 @@ ViewState 用 Command は `06-view-state.md` を参照する。
 - `amount > 0` は増加、`amount < 0` は減少。
 - 負数 Life を許容し、Life 0 で Game 終了しない。
 - 自分自身の Life のみ変更可能。
-- `amount=0` の扱いは未決定。
+- `amount=0` は `INVALID_AMOUNT` として拒否する。
 
 ### ShuffleZone
 
