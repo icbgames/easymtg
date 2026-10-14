@@ -8,9 +8,9 @@ import { cardDefinitionVersions, cardDefinitions } from './schema.js';
 
 export type CardSearchSort = 'englishName' | 'japaneseName' | 'cardDefinitionId';
 export type CardSearchOrder = 'asc' | 'desc';
-export type CardSearchRequest = { query: string; page: number; sort: CardSearchSort[]; order: CardSearchOrder[] };
+export type CardSearchRequest = { query: string; page: number; sort: CardSearchSort[]; order: CardSearchOrder[]; status?: 'ENABLED' | 'DISABLED' | 'ALL' };
 
-/** General-user card search. Disabled definitions are excluded by construction. */
+/** Card Definition search. General-user callers default to ENABLED; admins may choose either Status or all. */
 export class CardDefinitionRepository {
   constructor(private readonly db: Database) {}
 
@@ -24,7 +24,20 @@ export class CardDefinitionRepository {
       eq(cardDefinitionVersions.version, cardDefinitions.currentVersion),
     )).where(eq(cardDefinitions.id, parsedId.data));
     if (!row) return null;
-    return { ...CardDefinitionVersionSchema.parse({ ...row.version, cardDefinitionId: parsedId.data, createdAt: row.version.createdAt.toISOString() }), status: row.status as 'ENABLED' | 'DISABLED' };
+    const version = CardDefinitionVersionSchema.parse({
+      cardDefinitionId: parsedId.data,
+      version: row.version.version,
+      englishName: row.version.englishName,
+      ...(row.version.japaneseName === null ? {} : { japaneseName: row.version.japaneseName }),
+      ...(row.version.backName === null ? {} : { backName: row.version.backName }),
+      frontImageUrl: row.version.frontImageUrl,
+      ...(row.version.backImageUrl === null ? {} : { backImageUrl: row.version.backImageUrl }),
+      hasBack: row.version.hasBack,
+      ...(row.version.changeDescription === null ? {} : { changeDescription: row.version.changeDescription }),
+      rulesData: row.version.rulesData,
+      createdAt: row.version.createdAt.toISOString(),
+    });
+    return { ...version, status: row.status as 'ENABLED' | 'DISABLED' };
   }
 
   async search(input: CardSearchRequest): Promise<CardDefinitionSearchResponse> {
@@ -49,9 +62,10 @@ export class CardDefinitionRepository {
     }).from(cardDefinitions).innerJoin(cardDefinitionVersions, and(
       eq(cardDefinitionVersions.cardDefinitionId, cardDefinitions.id),
       eq(cardDefinitionVersions.version, cardDefinitions.currentVersion),
-    )).where(eq(cardDefinitions.status, 'ENABLED'));
+    )).where(input.status === 'ALL' ? undefined : eq(cardDefinitions.status, input.status ?? 'ENABLED'));
 
     const terms = normalizedQuery.split(/[\s\u3000]+/u).filter(Boolean).map((term) => term.toLocaleLowerCase());
+    const statusById = new Map(rows.map((row) => [row.cardDefinitionId, row.status as 'ENABLED' | 'DISABLED']));
     const items: CardDefinitionVersionWithStatus[] = rows.map((row) => CardDefinitionVersionSchema.parse({
       cardDefinitionId: row.cardDefinitionId,
       version: row.version,
@@ -64,7 +78,9 @@ export class CardDefinitionRepository {
       ...(row.changeDescription === null ? {} : { changeDescription: row.changeDescription }),
       rulesData: row.rulesData,
       createdAt: row.createdAt.toISOString(),
-    })).map((version) => ({ ...version, status: 'ENABLED' as const })).filter((item) => terms.every((term) =>
+    })).map((version) => ({ ...version, status: statusById.get(version.cardDefinitionId)! }))
+      .filter((item) => input.status === 'ALL' || item.status === (input.status ?? 'ENABLED'))
+      .filter((item) => terms.every((term) =>
       [item.cardDefinitionId, item.englishName, item.japaneseName ?? ''].some((field) =>
         field.normalize('NFKC').toLocaleLowerCase().includes(term),
       ),

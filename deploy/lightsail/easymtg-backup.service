@@ -1,0 +1,27 @@
+[Unit]
+Description=Back up EasyMTG PostgreSQL database to Amazon S3
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=easymtg-backup
+Group=easymtg-backup
+SupplementaryGroups=easymtg
+WorkingDirectory=/var/lib/easymtg-backup
+EnvironmentFile=/etc/easymtg/backup.env
+Environment=PGPASSFILE=/etc/easymtg/pgpass
+Environment=AWS_SHARED_CREDENTIALS_FILE=/etc/easymtg/aws-credentials
+Environment=HOME=/var/lib/easymtg-backup
+ExecStart=/usr/bin/bash /opt/easymtg/deploy/lightsail/backup-postgres.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/easymtg-backup
+UMask=0077

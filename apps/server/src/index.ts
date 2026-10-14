@@ -10,6 +10,8 @@ import { CleanupWorker } from './cleanup-worker.js';
 import { fileURLToPath } from 'node:url';
 import { RoomLifecycleApi } from './room-lifecycle-api.js';
 import { DeckRepository } from './db/deck-repository.js';
+import { AdminCardDefinitionRepository } from './db/admin-card-definition-repository.js';
+import { registerGracefulShutdown } from './graceful-shutdown.js';
 
 const database = createDatabase();
 await database.pool.query('select 1');
@@ -21,6 +23,8 @@ const app = await buildApp({
   cardDefinitions: new CardDefinitionRepository(database.db),
   cardDefinitionDetails: new CardDefinitionRepository(database.db),
   cardDefinitionVersions: new CardDefinitionRepository(database.db),
+  adminCardDefinitions: new AdminCardDefinitionRepository(database.db),
+  ...(process.env.ADMIN_API_TOKEN ? { adminApiToken: process.env.ADMIN_API_TOKEN } : {}),
   currentGameView: new GameSyncRepository(database.db),
   decks: deckRepository,
   sessions: new SessionRepository(database.db),
@@ -31,7 +35,9 @@ const app = await buildApp({
 });
 const cleanupWorker = new CleanupWorker(gameRepository, new SessionRepository(database.db), new CleanupRepository(database.db), app.log, undefined, (gameId) => webSocketSessions.releaseAbandonedGame(gameId));
 cleanupWorker.start();
+if (!process.env.ADMIN_API_TOKEN) app.log.warn('ADMIN_API_TOKEN is not configured; admin API routes are disabled.');
 app.addHook('onClose', async () => { await cleanupWorker.stop(); await database.pool.end(); });
+registerGracefulShutdown(app);
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '127.0.0.1';
 

@@ -38,6 +38,11 @@ suite('CardDefinitionRepository PostgreSQL integration', () => {
       expect(enabledOnly.totalCount).toBe(3);
       expect(enabledOnly.items.map(({ cardDefinitionId }) => cardDefinitionId)).toEqual([ids[0], ids[2], ids[1]]);
       expect(enabledOnly.items.every(({ status }) => status === 'ENABLED')).toBe(true);
+
+      const latestWithoutOptionalNames = await repository.getLatest(ids[1]!);
+      expect(latestWithoutOptionalNames).toMatchObject({ cardDefinitionId: ids[1], englishName: `easymtg-${marker} Beta`, status: 'ENABLED' });
+      expect(latestWithoutOptionalNames).not.toHaveProperty('japaneseName');
+      expect(latestWithoutOptionalNames).not.toHaveProperty('changeDescription');
     } finally {
       await db.transaction(async (tx) => {
         await tx.delete(cardDefinitionVersions).where(inArray(cardDefinitionVersions.cardDefinitionId, [...ids]));

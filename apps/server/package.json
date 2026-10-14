@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "node --env-file=../../.env --import tsx --watch src/index.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
-    "db:migrate": "node --env-file=../../.env --import tsx src/db/migrate.ts",
-    "test:db": "node --env-file=../../.env --import tsx ../../node_modules/vitest/vitest.mjs run src/db/session-repository.integration.test.ts src/db/card-definition-repository.integration.test.ts src/db/deck-repository.integration.test.ts src/db/room-repository.integration.test.ts src/db/game-repository.integration.test.ts",
+    "db:migrate": "node --env-file-if-exists=../../.env --import tsx src/db/migrate.ts",
+    "test:db": "node --env-file=../../.env --import tsx ../../node_modules/vitest/vitest.mjs run src/db/session-repository.integration.test.ts src/db/card-definition-repository.integration.test.ts src/db/deck-repository.integration.test.ts src/db/room-repository.integration.test.ts src/db/game-repository.integration.test.ts src/db/http-match.integration.test.ts",
     "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint ."

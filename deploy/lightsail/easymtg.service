@@ -1,0 +1,29 @@
+[Unit]
+Description=EasyMTG application server
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=easymtg
+Group=easymtg
+WorkingDirectory=/opt/easymtg
+EnvironmentFile=/etc/easymtg/easymtg.env
+ExecStart=/usr/bin/node /opt/easymtg/apps/server/dist/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

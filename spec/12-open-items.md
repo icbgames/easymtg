@@ -4,12 +4,11 @@
 
 ## 1. Protocol / API
 
-- Admin API の実認証方式、権限モデル、Version + Status 同時更新 endpoint。
+- Admin APIの認証方式（単独管理者Bearer token）とVersion + Status同時更新endpointは確定・実装済み。複数管理者・権限分割は現時点の対象外。
 
 ## 2. Authentication / Session
 
-- 管理者認証方式（管理者専用ログイン / 外部認証等）。
-- 管理者の権限モデル（現状は管理者権限を持つ利用者に限定する方針のみ確定）。
+- 複数管理者へ拡張する場合の個別identity・権限モデル。
 
 ## 3. Storage / Database
 
@@ -19,7 +18,8 @@ Phase 7のDrizzle schema / migration、repository実装、およびPostgreSQL in
 
 - Phase 7 MVPのHTTP / WebSocket / rulesData上限は `spec/11-security-and-errors.md` で確定。
 - 接続数、Rate limit、一般的な abuse protection。カード検索専用 Rate Limit は現時点では設けない方針。
-- Server / DB の deployment、hosting、production configuration。
+- Deployment targetはAWS LightsailのUbuntu 24.04 LTSとし、PostgreSQLを同一instanceに配置する（ユーザー決定、2026-10-14）。instance size、DNS / domain、実際のTLS設定およびproduction resource構成は未確定。
+- Production database backupはAWS S3へ日次保存、30日保持、RPO 24時間 / RTO 1日を目標とする（ユーザー決定、2026-10-14）。S3 bucket、IAM、lifecycleの実設定およびrestore drillは未実施。
 
 ## 5. Card rules / UI
 
@@ -32,7 +32,7 @@ Phase 7のDrizzle schema / migration、repository実装、およびPostgreSQL in
 - Property-based / fuzz test を導入するか。
 - CI workflow、lint / formatter、typecheck の具体設定。
 - Logging / metrics / tracing / alerting の設計。
-- 運用環境での管理 API の秘密情報管理。
+- 運用環境での管理 API とAWS backup identityの秘密情報管理・rotation手順。
 
 ## 7. 決定済みなので勝手に変更しない項目
 

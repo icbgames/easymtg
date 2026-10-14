@@ -14,12 +14,11 @@
 - Cookie名は`easymtg_session`、`Path=/`、`HttpOnly`、`SameSite=Lax`、有効期間30日のsliding expirationとする。TLS終端後のproductionでは`Secure`を必須とし、localhostのHTTP開発環境ではSecureを付けない。
 - Sessionが有効な間、各HTTP要求およびWebSocket handshakeで期限を検証する。Sessionの有効期限は最終利用から30日とし、利用時に延長する。ログアウトAPIは現時点で設けず、期限切れSessionはcleanup対象とする。
 - Cookieがない、期限切れ、または対応Sessionがない場合、一般APIは`UNAUTHENTICATED`（401）、WebSocket upgradeはHTTP 401とする。匿名Session発行専用HTTP APIは現時点で追加せず、一般Web画面の初回アクセス時にServerが発行する。
-- 管理者認証はこのMVP Sessionを流用しない。管理API実装時に別途定義する。
+- 管理者認証はこのMVP Sessionを流用しない。単独管理者向けに`ADMIN_API_TOKEN`のBearer認証を使用し、token未設定時は管理APIを登録しない。
 
 ## 2. 管理者
 
-- 管理 API は匿名 User Session と独立した認証・認可を必須とする。
-- 管理者の具体的な認証方式は未決定。
+- 管理 API は匿名 User Session と独立した認証・認可を必須とする。認証方式と運用は`09-admin-api.md`を参照する。
 - 一般ユーザーの匿名 User ID だけで Card Definition を変更できない。
 - 専用監査ログは現時点で設けない。
 - Status の変更履歴は保存しない。

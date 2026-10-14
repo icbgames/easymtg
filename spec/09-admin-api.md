@@ -5,7 +5,9 @@
 - 管理 API は一般ユーザー向け API から分離する。
 - 管理者認証は匿名 User Session から独立させる。
 - 管理 API 全 endpoint で認証・認可を必須とする。
-- 具体的な管理者ログイン方式、外部認証サービス、管理画面構成は未決定。
+- 単独管理者運用では `ADMIN_API_TOKEN` に設定する共有Bearer tokenを使用する。設定がない場合は管理API routeを登録しない。
+- Tokenは空白を含まない32 UTF-8 byte以上の秘密値とし、ServerはBearer値をconstant-time比較する。TokenをHTTP request / responseやログへ出さず、productionではTLSを必須とする。漏えい時はtokenをrotationする。
+- 管理画面は提供せず、信頼できる管理用ClientからAuthorization headerを付けてAPIを呼び出す。匿名User Sessionは認証に使用しない。
 - 管理者の `createdBy` は Card Definition Version に保存しない。
 - 専用の監査ログは設けない。必要になったら追加する。
 - Status 履歴は保存せず、現在の Status のみ保持する。
@@ -19,7 +21,7 @@
 - `POST /api/admin/card-definitions/{cardDefinitionId}/versions` — 新 Version 作成
 - `PATCH /api/admin/card-definitions/{cardDefinitionId}/status` — Status 変更
 
-Version 更新と Status 変更を同時に行う原子的な管理操作も提供する。具体的 endpoint 名は実装時に確定する。
+Version 更新と Status 変更を同時に行う原子的な管理操作は `PATCH /api/admin/card-definitions/{cardDefinitionId}/version-and-status` とする。
 
 過去 Version の一覧取得 API は必要になった時点で追加する。
 
@@ -41,6 +43,7 @@ Version 更新と Status 変更を同時に行う原子的な管理操作も提�
 - 初期 Status は ENABLED または DISABLED。
 - Version 1 は必ず存在する。
 - Card Definition 本体の物理削除 API は設けない。
+- Bodyは`requestId`, `cardDefinitionId`, `status`とVersion本文の各fieldを含む。IDは小文字を受け付け、大文字へ正規化する。
 
 ## 5. Version 更新
 
@@ -50,6 +53,7 @@ Version 更新と Status 変更を同時に行う原子的な管理操作も提�
 - 不一致なら `CARD_DEFINITION_VERSION_CONFLICT`。自動で後続 Version を作らない。
 - 既存 Version は不変。内容変更は新 Version として追加。
 - `DISABLED` 状態でも Version 更新可能。Status を自動で ENABLED にしない。
+- Bodyは`requestId`, `expectedVersion`とVersion本文の各fieldを含む。通常のVersion endpointではstatusを変更しない。
 - 同じ内容でも、更新リクエストが成功すれば新 Version を作成してよい。
 - Version の手動削除 API は設けない。
 
@@ -58,9 +62,10 @@ Version 更新と Status 変更を同時に行う原子的な管理操作も提�
 - request は変更後の `ENABLED` / `DISABLED` を明示する。
 - 同一カードへの更新を排他制御し、原子的に実行する。
 - Status-only 更新では Version を増やさない。
+- Bodyは`requestId`, `status`。
 - 現在と同じ Status の指定も成功とする（冪等）。
 - Status 変更だけでは Version metadata や Status history を作らない。
-- Version と Status の同時更新は原子的に処理する。
+- Version と Status の同時更新は`PATCH /api/admin/card-definitions/{cardDefinitionId}/version-and-status`で原子的に処理する。Bodyは`requestId`, `expectedVersion`, `status`とVersion本文のfieldを含む。
 
 ## 7. requestId（冪等性）
 

@@ -225,6 +225,8 @@
 
 本フェーズの設計正本は `spec/04-websocket-protocol.md` と `spec/10-persistence-and-cleanup.md`。Session / CookieとHTTP・WebSocket・rulesDataのMVP上限はユーザー承認を得て `spec/11-security-and-errors.md` に確定した。Deck CRUDとAdmin認証等の未決定HTTP APIは本フェーズで追加せず、既存の確定APIに範囲を限定する。
 
+> **進捗記録の読み方**：以下の日付付き記録は各日付時点の履歴であり、「未実装」「未決定」とある状態記述はその時点のもの。現在の状態はPhase 7残タスク表・完了記録と、後続のSection 19以降を参照する。2026-10-14時点でPhase 7・8は完了し、Phase 9を進行中。
+
 #### 実施内容
 
 1. **DB基盤**：Drizzle schema / migrationを作成し、PostgreSQL integration test環境とrepositoryを整える。
@@ -263,7 +265,7 @@
 | 7. 切断・cleanup | 完了 | 最後のSession切断集約、再接続時猶予解除、30分後のGame row lock付きABANDONED、Game 5 cleanup、Card Version / Session / Admin receipt batch workerを実装。 |
 | 8. 統合検証 | 完了 | PostgreSQL repository / command restart / reconnect replay / InitialState / startup recovery / timeout / version cleanup / Game 1〜5 lifecycle、DB-backed WebSocket Commandと送信失敗後reconnect replay、および実WebSocket transportを検証。 |
 
-この順序で項目2を先に進め、Room lifecycleの正本をPostgreSQLへ移してからWebSocket / syncへ接続する。各taskは独立して検証し、未決定HTTP APIやAdmin認証の仕様は確定させない。Phase 7完了条件を満たすまでPhase 8へ進まない。
+上表はPhase 7の実装完了時点（2026-10-11）の記録であり、前段の実施順序は履歴として残す。現時点でこの表にPhase 7の未完了項目はなく、後続作業はPhase 8以降の各節に記録する。
 
 **進捗（2026-10-11、同一origin）**：Serverは本番用Web buildを配信し、一般Web画面`GET /`でSessionを発行またはsliding expiryを更新するようにした。Vite開発ServerはHTTP APIとWebSocketをFastifyへproxyし、画面要求をFastifyへ中継してSet-Cookieを同一origin応答へ反映する。root `dev` commandはWeb buildを先に行う。初回発行・既存Session更新のFastify testを追加した。ユーザー合意に従い、`spec/11`のHTTP body / `rulesData`制限をSection 3の具体値に統一した。運用環境を含む全シナリオ確認と、Room/Match/Game永続化・WebSocket本体は引き続き未完了。
 
@@ -319,6 +321,8 @@ React UIの画面テストでデッキ編集の未保存60枚未満条件、3カ
 * 重大な不具合が未解決のまま残っていない。
 * 自動テスト、型チェック、Lint、ビルドが成功する。
 * 既知の制限事項が整理されている。
+
+**完了（2026-10-14）**：Deck作成からRoom参加、Game 1〜5、投了、Game間のDeck確定、Match終了・cleanupまでをPostgreSQL統合テストと2ブラウザの実操作で検証した。両プレイヤーのGame State Viewにおける手札の秘匿、Game間Deckの秘匿、開始権限・確定条件、勝敗非判定も確認した。Command永続化・重複排除、送信失敗後のreconnect replayは既存統合テストで確認済み。Card Definition詳細APIのnullable値処理とConcede後の不要な再取得を修正し、回帰テストを追加した。詳細な実施内容と検証結果はSection 21を参照。
 
 ### フェーズ10：運用・デプロイ準備
 
@@ -494,4 +498,33 @@ React UIの画面テストでデッキ編集の未保存60枚未満条件、3カ
 * PostgreSQL / Drizzleの論理table、FK / unique制約、JSONB適用箇所、migration運用、READ COMMITTED + row lock方針を`spec/10`に定義した。DBをGameStateの正本とし、GameState / Canonical Event / Player別Event View / sequence / CommandResultの原子的commit、ViewState永続化、Room・Match transaction、Game終了・Match終了cleanupを確定した。
 * WebSocket v1はHello / Welcome、Room・Match同期、Active Gameの差分replayまたはInitialState、ViewState同期の順とし、Game IDをHelloに追加してGame間のsequence誤適用を防ぐ。複数Session、受信・送信FIFO、Game sequence順の配信、heartbeat、protocol close code、Lifecycle payloadの項目を`spec/04`に定義した。
 * Event replayの秘匿性を保つためCanonical Eventに加え、commit時のGameStateから生成したPlayer別Event Viewを同一transactionで保存し、過去Eventを現在のGameStateで再maskingしない設計とした。
-* 初期WebSocket配備は単一Server processとし、process間socket fanout / 水平scaleは対象外。Frame / HTTP body / `rulesData`の具体的サイズ上限、匿名Session・Cookie、未定義HTTP endpoint、production backupのRPO / RTOは関連仕様の未決事項として残す。DB schema・Repository・Protocol Zod schema・PostgreSQL統合テストはPhase 7の実装タスクであり、未決定仕様とは区別した。
+* **当時の未決定事項（後続作業で更新）**：初期WebSocket配備は単一Server processとし、process間socket fanout / 水平scaleは対象外。Frame / HTTP body / `rulesData`の具体的な上限、匿名Session・Cookie、HTTP endpointは後続のPhase 7で仕様化・実装済み。DB schema・Repository・Protocol Zod schema・PostgreSQL統合テストもPhase 7で完了した。production backupの保持期間・RPO / RTOおよびhosting / deploymentは引き続き未決定（`spec/12-open-items.md`参照）。
+
+## 19. Web Client Event sequence / reconnect（2026-10-14）
+
+* Web ClientはPlayer向けGameStateViewとGame ID / sequenceの整合性を確認して同期cursorを更新し、再接続時のHelloに最後に同期したGame ID / sequenceを含める。
+* GameEventは現在のGameとsequence連続性を検証する。重複・回帰Eventは再適用せず、欠番・Game不一致・同期応答不整合時はSocketを再接続して同期をやり直す。秘匿情報のmaskingによりEventだけで状態を復元できない場合に備え、Event受信後はServerのPlayer向けGameStateViewも取得する。
+* Web UI回帰テストで通常Event後の再接続cursorとsequence欠番時の再同期cursorを確認した。Web test、全workspace build / typecheck / lintが成功。
+
+## 20. 単独管理者向けCard Definition Admin API（2026-10-14）
+
+* `ADMIN_API_TOKEN` Bearer認証（32 byte以上、constant-time比較、未設定時はroute無効）を追加し、匿名Sessionから独立させた。
+* Admin検索（ENABLED / DISABLED / 全件）、詳細・固定Version取得、作成、Version追加、Status変更、Version + Status同時更新を実装した。変更要求は`admin_request_results`と同一PostgreSQL transactionで冪等化し、対象Card rowをlockしてVersion競合を防ぐ。
+* セキュリティ設定、API payload、token生成・運用手順を仕様書とREADMEへ反映。HTTP認証 / route testとPostgreSQL統合testを含むServer test 40件が成功。Docker上の一時PostgreSQLにmigrationを適用し、全6 integration test fileの20件を実DBで検証した。全workspaceの`pnpm build`、`pnpm test`（87件成功、skipなし）、`pnpm typecheck`、`pnpm lint`も成功。検証用DBコンテナは作業後に削除した。
+
+## 21. Phase 9統合シナリオ着手（2026-10-14）
+
+* `apps/server/src/db/http-match.integration.test.ts`を追加し、実PostgreSQLを使って匿名Session、HTTP経由のDeck作成・一覧、Room作成、2人目参加時のMatch / Game 1開始、両プレイヤーのGame State Viewを一連で検証する。相手の初期手札からcardId / Card Definition ID / Versionが除去されることも各視点で確認する。
+* HTTP / WebSocket / PostgreSQLを通す統合scenarioをGame 1〜5と最終cleanupまで拡張した。Deck未確定での開始拒否、Owner以外の開始拒否、相手の次Game Deck情報の秘匿、勝敗を記録・表示しないこと、Game 5後のRoom / Match / Game cleanupも検証する。
+* 2つの異なるブラウザSessionでDeck作成・明示保存、Room作成・参加、Game 1〜5の開始、各Gameの投了、Game間のDeck確定、最終cleanupまで実操作した。Game 5終了後は両画面がホームへ戻り、「Matchが終了しました。勝敗の判定は行われません。」と表示されることを確認した。手札の秘匿表示およびGame 1のLife変更同期も確認した。
+* 実画面QAで`GET /api/card-definitions/JXY032`がnullable DB値をoptional文字列としてparseできず500になる問題を確認し、`CardDefinitionRepository.getLatest`でnull値のoptional項目を省略する修正とPostgreSQL回帰テストを追加した。Deck・Sideboard画面からCard Definitionの詳細が取得できることを再確認した。テスト用カード画像URL`cards.example.test`は名前解決されず画像取得に失敗するが、カード表示・対戦進行は確認できた。
+* Game 1の終了後にClientが終了済みGameを再取得する問題も修正し、Web UI回帰テストを追加した。
+* 最終検証はworkspace全体の`pnpm test`が90件成功（skipなし）、PostgreSQL統合テスト6 files / 20 tests成功、`pnpm build`、`pnpm typecheck`、`pnpm lint`成功。Player IDを絞らずsnapshotのDB返却順に依存していた統合テストを修正し、全DBテストを再実行した。Phase 9の完了条件を満たした。次はユーザーが選択したAWS Lightsail環境に向けてPhase 10を進める。
+
+## 22. Phase 10 Lightsail向け準備（2026-10-14）
+
+* ユーザー決定：AWS Lightsail、Ubuntu 24.04 LTS、同一instance上のPostgreSQLを対象とする。PostgreSQL backupはAWS S3へ日次保存し、30日保持、RPO 24時間・RTO 1日を目標とする。
+* `deploy/lightsail`にsystemdのapp / migration / backup unit、Nginx reverse-proxy設定、S3向けbackup script、構築・更新・復旧手順を追加した。Server packageにはproduction start commandを追加し、migration commandはproductionの外部EnvironmentFileだけでも実行可能にした。
+* systemdのSIGINT / SIGTERMに応じてFastify、cleanup worker、PostgreSQL poolを閉じるgraceful shutdownと単体テストを追加した。
+* Productionと同じmigration commandで一時PostgreSQLへmigrationを適用し、DB統合テストを含む全workspaceの`pnpm test`（90件成功、skipなし）を確認した。`pnpm build`、`pnpm typecheck`、`pnpm lint`も成功。Production modeでbuilt Serverを一時PostgreSQLに接続して起動し、health / static UIがHTTP 200、Session CookieにSecure属性が付くことを確認した。backup scriptはbash syntax checkに成功した。
+* 実際のLightsail / S3 resourceは作成していない。Domain、S3 bucket / IAM credentials / lifecycle、Ubuntu上のunit・Nginx設定、外部backupへのupload、restore drillは本番環境で検証が必要なため、Phase 10は継続中。

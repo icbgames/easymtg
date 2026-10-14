@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildApp } from './app.js';
+import type { CardSearchRequest } from './db/card-definition-repository.js';
 import { PlayerIdSchema, RoomIdSchema, type Room } from '@easymtg/shared';
 import type { RoomLifecycleResult } from './room-lifecycle-api.js';
 
@@ -143,5 +144,57 @@ describe('server foundation', () => {
     expect((await app.inject({ method: 'GET', url: '/api/rooms/current', headers })).json()).toMatchObject({ room: { roomId }, playerId, selectedDeckId: 'deck-secret' });
     expect(calls).toEqual(['create:deck-a', 'join:room-a:deck-b', 'confirm:60', 'unconfirm', 'start', 'leave']);
     expect(updates).toHaveLength(6);
+  });
+
+  it('protects Admin Card Definition APIs with a separate Bearer token', async () => {
+    const token = 'T'.repeat(32);
+    const searches: CardSearchRequest[] = [];
+    const mutations: Array<{ requestId: string; fingerprint: string }> = [];
+    const adminCards = {
+      search: async (input: CardSearchRequest) => {
+        searches.push(input);
+        return { items: [], page: input.page, pageSize: 50, totalCount: 0, totalPages: 0 };
+      },
+      getLatest: async () => null,
+      getVersion: async () => null,
+      mutate: async (_adminId: string, requestId: string, fingerprint: string) => {
+        mutations.push({ requestId, fingerprint });
+        return { status: 201, body: { data: { cardDefinitionId: 'ABC123', status: 'ENABLED', version: { version: 1 } } } };
+      },
+      create: vi.fn(), appendVersion: vi.fn(), changeStatus: vi.fn(),
+    };
+    app = await buildApp({ adminApiToken: token, adminCardDefinitions: adminCards });
+
+    const unauthenticated = await app.inject({ method: 'GET', url: '/api/admin/card-definitions' });
+    expect(unauthenticated.statusCode).toBe(401);
+    expect(unauthenticated.json().error.code).toBe('UNAUTHENTICATED');
+    const cookieIsNotAdminAuth = await app.inject({
+      method: 'GET', url: '/api/admin/card-definitions', headers: { cookie: `easymtg_session=${token}` },
+    });
+    expect(cookieIsNotAdminAuth.statusCode).toBe(401);
+
+    const searched = await app.inject({
+      method: 'GET', url: '/api/admin/card-definitions?status=DISABLED',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(searched.statusCode).toBe(200);
+    expect(searches).toEqual([{
+      query: '', page: 1, sort: ['englishName', 'cardDefinitionId'], order: ['asc', 'asc'], status: 'DISABLED',
+    }]);
+
+    const requestId = 'f2a3aa30-9191-4c48-aa76-84df905f3254';
+    const created = await app.inject({
+      method: 'POST', url: '/api/admin/card-definitions', headers: { authorization: `Bearer ${token}` },
+      payload: {
+        requestId, cardDefinitionId: 'abc123', status: 'ENABLED',
+        englishName: 'Test Card', frontImageUrl: 'https://cards.example.test/front.jpg', hasBack: false, rulesData: {},
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(mutations).toHaveLength(1);
+    expect(mutations[0]?.requestId).toBe(requestId);
+
+    const weakTokenConfig = buildApp({ adminApiToken: 'too-short', adminCardDefinitions: adminCards });
+    await expect(weakTokenConfig).rejects.toThrow('ADMIN_API_TOKEN must contain at least 32 UTF-8 bytes and no whitespace.');
   });
 });

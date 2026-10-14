@@ -87,6 +87,7 @@ export default function App() {
   const [roomEnded, setRoomEnded] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
   const playerIdRef = useRef<string | null>(null);
+  const syncCursorRef = useRef<{ gameId: string; sequence: number } | null>(null);
 
   const pushLog = useCallback((text: string, tone?: LogEntry['tone']) => {
     setLogs((existing) => [...existing.slice(-99), { id: crypto.randomUUID(), text, tone }]);
@@ -105,13 +106,25 @@ export default function App() {
     setDecks(result);
   }, []);
 
-  const refreshGame = useCallback(async () => {
+  const refreshGame = useCallback(async (expectedGameId?: string) => {
     const result = await request<{ game: { gameId: string; sequence: number; gameStateView: unknown } | null }>('/api/rooms/current/game-state');
-    const parsed = result.game ? GameStateViewSchema.safeParse(result.game.gameStateView) : null;
-    if (parsed?.success) {
-      setGame(parsed.data);
-      await refreshCardMeta(parsed.data, setCardMeta);
-    } else if (!result.game) setGame(null);
+    if (!result.game) {
+      if (expectedGameId) throw new Error('The active Game is not available for synchronization.');
+      setGame(null);
+      syncCursorRef.current = null;
+      return null;
+    }
+    const parsed = GameStateViewSchema.safeParse(result.game.gameStateView);
+    if (!parsed.success || parsed.data.gameId !== result.game.gameId || parsed.data.sequence !== result.game.sequence ||
+      (expectedGameId !== undefined && expectedGameId !== result.game.gameId)) {
+      throw new Error('The Game synchronization response is inconsistent.');
+    }
+    const cursor = syncCursorRef.current;
+    if (cursor?.gameId === result.game.gameId && cursor.sequence > result.game.sequence) return cursor;
+    setGame(parsed.data);
+    syncCursorRef.current = { gameId: result.game.gameId, sequence: result.game.sequence };
+    await refreshCardMeta(parsed.data, setCardMeta);
+    return syncCursorRef.current;
   }, []);
 
   useEffect(() => {
@@ -131,6 +144,7 @@ export default function App() {
     let stopped = false;
     let timer: number | undefined;
     let delay = 1000;
+    let eventTail = Promise.resolve();
     const connect = () => {
       if (stopped) return;
       setConnectionLabel('接続しています');
@@ -140,7 +154,11 @@ export default function App() {
         delay = 1000;
         setConnected(true);
         setConnectionLabel('接続中');
-        socket.send(JSON.stringify({ type: 'Hello', protocolVersion: 1, lastGameId: null, lastSequence: null }));
+        const cursor = syncCursorRef.current;
+        socket.send(JSON.stringify({
+          type: 'Hello', protocolVersion: 1,
+          lastGameId: cursor?.gameId ?? null, lastSequence: cursor?.sequence ?? null,
+        }));
         void refreshRoom().catch(() => undefined);
       });
       socket.addEventListener('message', (event) => {
@@ -155,21 +173,52 @@ export default function App() {
         }
         if (message.type === 'MatchStateSync') {
           setMatch(message.match);
-          if (message.match?.activeGameId) void refreshGame().catch(() => undefined);
-          else setGame(null);
+          if (message.match?.activeGameId) {
+            void refreshGame(message.match.activeGameId).catch((cause: unknown) => setError(messageForError(cause)));
+          } else {
+            setGame(null);
+            syncCursorRef.current = null;
+          }
           return;
         }
         if (message.type === 'InitialState') {
           const view = GameStateViewSchema.safeParse(message.gameStateView);
-          if (view.success) {
-            setGame(view.data);
-            void refreshCardMeta(view.data, setCardMeta);
+          if (!view.success || view.data.gameId !== message.gameId || view.data.sequence !== message.sequence) {
+            socket.close(4000, 'Game synchronization required.');
+            return;
           }
+          const cursor = syncCursorRef.current;
+          if (cursor?.gameId === message.gameId && message.sequence < cursor.sequence) {
+            socket.close(4000, 'Game synchronization required.');
+            return;
+          }
+          setGame(view.data);
+          syncCursorRef.current = { gameId: message.gameId, sequence: message.sequence };
+          void refreshCardMeta(view.data, setCardMeta);
           return;
         }
         if (message.type === 'GameEvent') {
-          pushLog(describeGameEvent(message));
-          void refreshGame().catch((cause: unknown) => setError(messageForError(cause)));
+          eventTail = eventTail.then(async () => {
+            const cursor = syncCursorRef.current;
+            if (!cursor || cursor.gameId !== message.gameId) {
+              socket.close(4000, 'Game synchronization required.');
+              return;
+            }
+            if (message.sequence <= cursor.sequence) return;
+            if (message.sequence !== cursor.sequence + 1) {
+              socket.close(4000, 'Game sequence gap.');
+              return;
+            }
+            pushLog(describeGameEvent(message));
+            if (message.eventType === 'ConcedeApplied') return;
+            const refreshed = await refreshGame(message.gameId);
+            if (!refreshed || refreshed.sequence < message.sequence) {
+              socket.close(4000, 'Game synchronization required.');
+            }
+          }).catch((cause: unknown) => {
+            setError(messageForError(cause));
+            socket.close(4000, 'Game synchronization failed.');
+          });
           return;
         }
         if (message.type === 'ViewStatePrivate' || message.type === 'ViewStateSync') {
@@ -199,14 +248,16 @@ export default function App() {
         if (message.type === 'GameStarted') {
           pushLog(`Game ${message.gameNumber} を開始しました。`, 'notice');
           setRoomEnded(false);
+          syncCursorRef.current = null;
           void refreshRoom().catch(() => undefined);
-          void refreshGame().catch(() => undefined);
+          void refreshGame(message.gameId).catch((cause: unknown) => setError(messageForError(cause)));
           return;
         }
         if (message.type === 'GameEnded') {
           pushLog(`Game ${message.gameNumber} が終了しました。`, 'notice');
           void refreshRoom().catch(() => undefined);
           setGame(null);
+          if (syncCursorRef.current?.gameId === message.gameId) syncCursorRef.current = null;
           return;
         }
         if (message.type === 'MatchEnded') {
@@ -214,6 +265,7 @@ export default function App() {
           setRoomEnded(true);
           setGame(null);
           setMatch(null);
+          syncCursorRef.current = null;
           void refreshRoom().catch(() => undefined);
         }
       });
