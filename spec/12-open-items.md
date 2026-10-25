@@ -45,7 +45,7 @@ Phase 7のDrizzle schema / migration、repository実装、およびPostgreSQL in
 - Sideboard は 0〜15 枚。
 - 専用の裏面がないカードも裏向きにできる。
 - カードが戦場を離れた場合、Controller は Owner に戻る。
-- Card Definition ID は 3 英字 + 3 数字、正規化後永久に再利用不可。
+- Card Definition ID は先頭3文字がASCII英数字、後半3文字が数字で、英字を大文字に正規化後永久に再利用不可。
 - Card Definition Version は不変。Game 開始時に各 CardInstance へ固定。
 - Game Event sequence は Game ごと、eventId は全体一意。
 - Command は Game ごとに直列処理。失敗 Command は後続を止めない。

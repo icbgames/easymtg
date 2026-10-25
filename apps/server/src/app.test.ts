@@ -186,7 +186,7 @@ describe('server foundation', () => {
     const created = await app.inject({
       method: 'POST', url: '/api/admin/card-definitions', headers: { authorization: `Bearer ${token}` },
       payload: {
-        requestId, cardDefinitionId: 'abc123', status: 'ENABLED',
+        requestId, cardDefinitionId: '10e004', status: 'ENABLED',
         englishName: 'Test Card', frontImageUrl: 'https://cards.example.test/front.jpg', hasBack: false, rulesData: {},
       },
     });

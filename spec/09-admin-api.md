@@ -36,7 +36,7 @@ Version 更新と Status 変更を同時に行う原子的な管理操作は `PA
 ## 4. 新規登録
 
 - `cardDefinitionId` は request で指定する。サーバー自動生成ではない。
-- ID 形式は英字 3 + 数字 3。小文字は大文字に正規化する。
+- ID 形式は英数字（英字または数字）3 文字 + 数字 3 桁。英字は ASCII の A-Z / a-z、数字は ASCII の 0-9 とし、Unicode英数字は受け付けない。小文字は大文字に正規化する（例 `10e004` → `10E004`）。
 - 正規化後に既存 ID と重複したら `CARD_DEFINITION_ID_ALREADY_EXISTS`。
 - ID は永久に再利用しない。
 - 新規登録時は Version 1 を作成する。

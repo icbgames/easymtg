@@ -3,7 +3,7 @@ import fastifyStatic from '@fastify/static';
 import { resolve } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import websocket from '@fastify/websocket';
-import { CardDefinitionIdSchema, CardDefinitionSearchResponseSchema, CardDefinitionVersionSchema, DeckIdSchema, DeckListResponseSchema, DeckResponseSchema, DeckWriteSchema, HttpErrorCodeSchema, HTTP_STATUS_BY_ERROR_CODE, NextGameDeckSchema, RoomIdSchema, z, type Deck, type HttpErrorCode } from '@easymtg/shared';
+import { CardDefinitionIdInputSchema, CardDefinitionIdSchema, CardDefinitionSearchResponseSchema, CardDefinitionVersionSchema, DeckIdSchema, DeckListResponseSchema, DeckResponseSchema, DeckWriteSchema, HttpErrorCodeSchema, HTTP_STATUS_BY_ERROR_CODE, NextGameDeckSchema, RoomIdSchema, z, type Deck, type HttpErrorCode } from '@easymtg/shared';
 import { RulesDataSchema } from '@easymtg/shared';
 import type { CardSearchRequest } from './db/card-definition-repository.js';
 import { adminRequestFingerprint, type AdminTransaction } from './db/admin-card-definition-repository.js';
@@ -181,7 +181,7 @@ export async function buildApp(dependencies: AppDependencies = {}) {
       const envelope = z.object({ requestId: requestIdSchema }).passthrough().safeParse(raw);
       if (!envelope.success) return reply.code(400).send(httpError('INVALID_REQUEST', 'A valid requestId is required.'));
       const parsed = z.object({
-        requestId: requestIdSchema, cardDefinitionId: z.string().regex(/^[A-Za-z]{3}\d{3}$/u),
+        requestId: requestIdSchema, cardDefinitionId: CardDefinitionIdInputSchema,
         status: statusSchema, ...versionInputSchema.shape,
       }).strict().safeParse(raw);
       return executeMutation(request, reply, envelope.data.requestId, { method: 'POST', route: '/api/admin/card-definitions', body: raw }, async (tx) => {

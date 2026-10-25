@@ -3,7 +3,8 @@
 ## 1. Card Definition ID
 
 - `cardDefinitionId` は管理者が登録時に指定する。
-- 形式は英大文字 3 文字 + 数字 3 桁（例 `ABC001`）。
+- 形式は英数字（英字または数字）3 文字 + 数字 3 桁（例 `ABC001`, `10E004`）。
+- 英字は ASCII の A-Z / a-z、数字は ASCII の 0-9 とする。Unicode英数字は使用しない。
 - 入力が小文字を含む場合、サーバーは登録前に大文字へ正規化する。
 - 正規化後に重複していれば `CARD_DEFINITION_ID_ALREADY_EXISTS`。
 - ID は一度使ったら永久に再利用不可。

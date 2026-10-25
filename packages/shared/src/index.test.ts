@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CardDefinitionSchema, CardDefinitionVersionSchema, DeckSchema, DeckSnapshotSchema, MatchSchema, RoomSchema, z } from './index.js';
+import { CardDefinitionIdInputSchema, CardDefinitionIdSchema, CardDefinitionSchema, CardDefinitionVersionSchema, DeckSchema, DeckSnapshotSchema, MatchSchema, RoomSchema, z } from './index.js';
 
 describe('shared schema foundation', () => {
   it('exposes Zod for shared schemas', () => {
@@ -28,6 +28,16 @@ describe('shared schema foundation', () => {
     expect(CardDefinitionVersionSchema.safeParse({ ...version, frontImageUrl: 'http://cards.example/front.png' }).success).toBe(false);
     expect(CardDefinitionVersionSchema.safeParse({ ...version, backName: 'Back' }).success).toBe(false);
     expect(CardDefinitionSchema.safeParse({ id: 'ABC123', status: 'ENABLED', currentVersion: 2, versions: [version] }).success).toBe(false);
+  });
+
+  it('accepts three alphanumeric characters followed by three digits as a card definition ID', () => {
+    expect(CardDefinitionIdSchema.safeParse('ABC123').success).toBe(true);
+    expect(CardDefinitionIdSchema.safeParse('10E004').success).toBe(true);
+    expect(CardDefinitionIdSchema.safeParse('A1Z004').success).toBe(true);
+    expect(CardDefinitionIdSchema.safeParse('AB-004').success).toBe(false);
+    expect(CardDefinitionIdSchema.safeParse('10E04A').success).toBe(false);
+    expect(CardDefinitionIdInputSchema.safeParse('10e004').success).toBe(true);
+    expect(CardDefinitionIdInputSchema.safeParse('10E00A').success).toBe(false);
   });
 
   it('uses the specified saved Deck and DeckSnapshot board representation', () => {
