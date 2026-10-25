@@ -71,6 +71,38 @@ describe('browser UI', () => {
     expect(save?.disabled).toBe(true);
   });
 
+  it('sorts deck editor card rows by type and then cost without changing add controls', async () => {
+    const cards = [
+      { cardDefinitionId: 'CRE001', version: 1, status: 'ENABLED', englishName: 'Creature', japaneseName: 'Creature', hasBack: false, frontImageUrl: 'https://example.com/card.webp', rulesData: { type: 'Creature', cost: 2 }, createdAt: '2026-01-01T00:00:00.000Z' },
+      { cardDefinitionId: 'ART002', version: 1, status: 'ENABLED', englishName: 'Artifact 5', japaneseName: 'Artifact 5', hasBack: false, frontImageUrl: 'https://example.com/card.webp', rulesData: { type: 'Artifact', cost: 5 }, createdAt: '2026-01-01T00:00:00.000Z' },
+      { cardDefinitionId: 'ART001', version: 1, status: 'ENABLED', englishName: 'Artifact 1', japaneseName: 'Artifact 1', hasBack: false, frontImageUrl: 'https://example.com/card.webp', rulesData: { type: 'Artifact', cost: 1 }, createdAt: '2026-01-01T00:00:00.000Z' },
+      { cardDefinitionId: 'ART003', version: 1, status: 'ENABLED', englishName: 'Artifact unknown cost', japaneseName: 'Artifact unknown cost', hasBack: false, frontImageUrl: 'https://example.com/card.webp', rulesData: { type: 'Artifact' }, createdAt: '2026-01-01T00:00:00.000Z' },
+      { cardDefinitionId: 'UNT001', version: 1, status: 'ENABLED', englishName: 'Unknown type', japaneseName: 'Unknown type', hasBack: false, frontImageUrl: 'https://example.com/card.webp', rulesData: { cost: 0 }, createdAt: '2026-01-01T00:00:00.000Z' },
+    ];
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/rooms/current') return jsonResponse({ room: null });
+      if (url === '/api/decks') return jsonResponse([]);
+      if (url.startsWith('/api/card-definitions?')) return jsonResponse({ items: cards, totalPages: 1 });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<App />); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => { [...host!.querySelectorAll('button')].find((button) => button.textContent?.includes('デッキを管理'))?.click(); });
+    await act(async () => { [...host!.querySelectorAll('button')].find((button) => button.textContent?.includes('新しいデッキ'))?.click(); await new Promise((resolve) => setTimeout(resolve, 350)); });
+
+    for (const card of cards) {
+      await act(async () => { host!.querySelector<HTMLButtonElement>(`button[aria-label="${card.englishName}をMainboardに追加"]`)?.click(); });
+    }
+    const mainboardRows = host.querySelectorAll('.board-editor ul li .board-card-name');
+    expect([...mainboardRows].map((row) => row.querySelector('small')?.textContent?.slice(0, 6))).toEqual([
+      'ART001', 'ART002', 'ART003', 'CRE001', 'UNT001',
+    ]);
+  });
+
   it('renders a three-column game screen and sends the selected life increment', async () => {
     const playerId = 'player-one';
     const opponentId = 'player-two';

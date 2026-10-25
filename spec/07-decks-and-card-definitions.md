@@ -119,3 +119,11 @@ Version ごとの情報：
 - Card search API は匿名 User ID Session を要求する。
 - 検索結果には最新 Version の全フィールド、`version`、現在 `status` を含める。通常検索では ENABLED のみ。管理検索では DISABLED も検索可能。
 - `version` は参照情報であり Deck に保存しない。Game 開始時にサーバーが解決する。
+
+## 8. Deck 編集画面のカード表示順
+
+- Mainboard / Sideboard のカード一覧は、同じカードを枚数集約した行単位で表示する。
+- 表示順は `rulesData.type` の昇順、次に `rulesData.cost` の数値昇順とする。type の比較には日本語ロケールを使用する。
+- type が文字列でない、または未設定のカードは type があるカードの後に表示する。同じ type 内では、cost が有限数値でない、または未設定のカードを cost があるカードの後に表示する。
+- 同じ sort 値のカード同士は元の順序を維持する。
+- これは編集画面上の表示順のみであり、Deck の保存配列や API の配列順序は変更しない。

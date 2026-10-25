@@ -540,8 +540,27 @@ function DeckEditor({ initial, isNew, onCancel, onSaved, onError }: { initial: D
 }
 
 function BoardEditor({ title, count, limit, cards, meta, onMinus, onPlus }: { title: string; count: number; limit: string; cards: Array<{ id: string; count: number }>; meta: (id: string) => CardMeta | undefined; onMinus: (id: string) => void; onPlus: (id: string) => void }) {
+  const sortedCards = [...cards].sort((a, b) => {
+    const aMeta = meta(a.id);
+    const bMeta = meta(b.id);
+    const aType = typeof aMeta?.rulesData.type === 'string' ? aMeta.rulesData.type : undefined;
+    const bType = typeof bMeta?.rulesData.type === 'string' ? bMeta.rulesData.type : undefined;
+    if (aType === undefined && bType !== undefined) return 1;
+    if (aType !== undefined && bType === undefined) return -1;
+    if (aType !== undefined && bType !== undefined) {
+      const typeOrder = aType.localeCompare(bType, 'ja', { numeric: true, sensitivity: 'base' });
+      if (typeOrder !== 0) return typeOrder;
+    }
+
+    const aCost = typeof aMeta?.rulesData.cost === 'number' && Number.isFinite(aMeta.rulesData.cost) ? aMeta.rulesData.cost : undefined;
+    const bCost = typeof bMeta?.rulesData.cost === 'number' && Number.isFinite(bMeta.rulesData.cost) ? bMeta.rulesData.cost : undefined;
+    if (aCost === undefined && bCost !== undefined) return 1;
+    if (aCost !== undefined && bCost === undefined) return -1;
+    if (aCost !== undefined && bCost !== undefined) return aCost - bCost;
+    return 0;
+  });
   return <section className="board-editor"><header><h2>{title}</h2><strong>{count}</strong><small>{limit}</small></header>
-    {cards.length === 0 ? <p className="empty-inline">検索結果からカードを追加してください。</p> : <ul>{cards.map(({ id, count: amount }) => {
+    {cards.length === 0 ? <p className="empty-inline">検索結果からカードを追加してください。</p> : <ul>{sortedCards.map(({ id, count: amount }) => {
       const card = meta(id);
       return <li key={id} className={card?.status === 'DISABLED' ? 'disabled-card' : ''}><img src={card?.frontImageUrl || FALLBACK_IMAGE} alt="" onError={(event) => { event.currentTarget.src = FALLBACK_IMAGE; }} /><span className="board-card-name">{card?.japaneseName ?? card?.englishName ?? id}<small>{id}{card?.status === 'DISABLED' ? ' ・ DISABLED（使用不可）' : ''}</small></span><button aria-label={`${card?.englishName ?? id}を1枚減らす`} onClick={() => onMinus(id)}>−</button><b>{amount}</b><button aria-label={`${card?.englishName ?? id}を1枚増やす`} onClick={() => onPlus(id)}>＋</button></li>;
     })}</ul>}
