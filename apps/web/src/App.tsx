@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent, DragEvent, MouseEvent } from 'react';
+import type { FormEvent, DragEvent, MouseEvent, CSSProperties } from 'react';
 import { GameStateViewSchema, type GameStateView, type GameCardView } from '@easymtg/game/view';
 import {
   ServerMessageSchema, type CardDefinitionVersion, type CardDefinitionVersionWithStatus,
@@ -638,9 +638,13 @@ function GameScreen({ game, room, playerId, cardMeta, logs, connected, connectio
       : null;
   }, [viewState]);
   const battlefield = game.zones.find(({ type }) => type === 'BATTLEFIELD');
+  const battlefieldColumnCount = Math.max(8, ...(battlefield?.cards ?? []).map((card) => (card.position?.x ?? 0) + 1));
+  const battlefieldRowCount = Math.max(2, ...(battlefield?.cards ?? []).map((card) => (card.position?.y ?? 0) + 1));
+  const battlefieldStyle = { minWidth: `${battlefieldColumnCount * 144}px`, minHeight: `${battlefieldRowCount * 190}px` };
   const localPlayer = game.players.find(({ playerId: id }) => id === playerId);
   const opponent = game.players.find(({ playerId: id }) => id !== playerId);
   const localReady = room.participants.every(({ connectionState }) => connectionState === 'CONNECTED');
+  const opponentPerspective = game.players[1]?.playerId === playerId;
   const cardIn = (zoneId: string) => game.zones.find(({ zoneId: id }) => id === zoneId);
   const playerZone = (type: string, owner: string) => game.zones.find((zone) => zone.type === type && zone.ownerPlayerId === owner);
   const identified = (card: GameCardView): card is GameCardView & { cardId: string; cardDefinitionId: string; cardDefinitionVersion: number } => 'cardId' in card;
@@ -656,14 +660,32 @@ function GameScreen({ game, room, playerId, cardMeta, logs, connected, connectio
   };
   const positionFromDrop = (event: DragEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
-    return { x: Math.max(0, Math.floor((event.clientX - rect.left + event.currentTarget.scrollLeft) / 144)), y: Math.max(0, Math.floor((event.clientY - rect.top + event.currentTarget.scrollTop) / 190)) };
+    const x = event.clientX - rect.left + event.currentTarget.scrollLeft;
+    const y = event.clientY - rect.top + event.currentTarget.scrollTop;
+    if (opponentPerspective) {
+      return {
+        x: Math.max(0, Math.floor((event.currentTarget.scrollWidth - x - 1) / 144)),
+        y: Math.max(0, Math.floor((event.currentTarget.scrollHeight - y - 1) / 190)),
+      };
+    }
+    return { x: Math.max(0, Math.floor(x / 144)), y: Math.max(0, Math.floor(y / 190)) };
   };
-  const startDrag = (event: DragEvent, card: GameCardView) => { if (identified(card)) event.dataTransfer.setData('text/easymtg-card', card.cardId); };
+  const startDrag = (event: DragEvent, card: GameCardView) => {
+    if (!identified(card)) return;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/easymtg-card', card.cardId);
+    event.dataTransfer.setData('text/plain', card.cardId);
+  };
   const dropZone = (event: DragEvent, zoneId: string) => {
-    event.preventDefault(); const cardId = event.dataTransfer.getData('text/easymtg-card');
+    event.preventDefault(); const cardId = event.dataTransfer.getData('text/easymtg-card') || event.dataTransfer.getData('text/plain');
     if (!cardId) return;
     const target = cardIn(zoneId);
-    if (target?.type === 'BATTLEFIELD') move(cardId, zoneId, positionFromDrop(event as DragEvent<HTMLDivElement>));
+    if (target?.type === 'BATTLEFIELD') {
+      const position = positionFromDrop(event as DragEvent<HTMLDivElement>);
+      const source = game.zones.find((zone) => zone.cards.some((card) => identified(card) && card.cardId === cardId));
+      if (source?.type === 'BATTLEFIELD') issue('MoveCardPosition', { cardId, position });
+      else move(cardId, zoneId, position);
+    }
     else if (target?.type === 'LIBRARY') issue('MoveCard', { cardId, destinationZoneId: zoneId, insertIndex: 0 });
     else move(cardId, zoneId);
   };
@@ -678,7 +700,21 @@ function GameScreen({ game, room, playerId, cardMeta, logs, connected, connectio
     const src = card.faceDown ? (meta?.backImageUrl || BACK_IMAGE) : (meta?.frontImageUrl || FALLBACK_IMAGE);
     const cardId = known ? card.cardId : undefined;
     const title = known ? (meta?.japaneseName ?? meta?.englishName ?? card.cardDefinitionId) : '非公開カード';
-    return <button key={cardId ?? opts.key ?? `${opts.className}-${card.ownerPlayerId}-${card.faceDown}`} className={`card-tile ${opts.className ?? ''} ${card.tapped ? 'tapped' : ''} ${selectedCard === cardId ? 'selected' : ''} ${!known ? 'unknown' : ''}`} style={card.position && opts.className === 'battle-card' ? { left: `${card.position.x * 144}px`, top: `${card.position.y * 190}px` } : undefined}
+    const isBattleCard = opts.className === 'battle-card';
+    const isOpponentControlled = isBattleCard && card.controllerPlayerId !== playerId;
+    const cardRotation = isBattleCard
+      ? opponentPerspective
+        ? isOpponentControlled ? (card.tapped ? '-90deg' : '0deg') : (card.tapped ? '90deg' : '180deg')
+        : isOpponentControlled ? (card.tapped ? '90deg' : '180deg') : (card.tapped ? '-90deg' : '0deg')
+      : undefined;
+    const cardStyle = card.position && isBattleCard
+      ? {
+          left: `${card.position.x * 144}px`,
+          top: `${card.position.y * 190}px`,
+          ...(cardRotation ? { '--card-rotation': cardRotation } : {}),
+        } as CSSProperties & { '--card-rotation'?: string }
+      : undefined;
+    return <button key={cardId ?? opts.key ?? `${opts.className}-${card.ownerPlayerId}-${card.faceDown}`} className={`card-tile ${opts.className ?? ''} ${isOpponentControlled ? 'opponent-controlled' : ''} ${card.tapped ? 'tapped' : ''} ${selectedCard === cardId ? 'selected' : ''} ${!known ? 'unknown' : ''}`} style={cardStyle}
       draggable={known && localReady} onDragStart={(event) => startDrag(event, card)} onDoubleClick={() => { if (known) issue(card.tapped ? 'UntapCard' : 'TapCard', { cardId: card.cardId }); }}
       onClick={() => { if (opts.viewMode && known && viewPrivate) issue('SelectViewCard', { viewId: viewPrivate.viewId, cardId: card.cardId, selected: !viewPrivate.selectedCardIds.includes(card.cardId) }); else { setSelectedCard(cardId ?? null); if (known && opts.className !== 'battle-card') setContext({ cardId: card.cardId, x: 0, y: 0 }); } }}
       onContextMenu={(event: MouseEvent) => { event.preventDefault(); if (known) setContext({ cardId: card.cardId, x: Math.min(event.clientX, window.innerWidth - 300), y: Math.min(event.clientY, window.innerHeight - 400) }); }}
@@ -710,7 +746,7 @@ function GameScreen({ game, room, playerId, cardMeta, logs, connected, connectio
       <div className="phase-track" aria-label="フェイズとステップ">
         {phaseSteps.map(({ phase, step, label }) => <button key={`${phase}-${step ?? 'none'}`} className={game.phase === phase && game.step === step ? 'current' : ''} disabled={!localReady || game.activePlayerId !== playerId} onClick={() => issue('ChangeTurnPosition', { phase, step })}>{label}</button>)}
       </div>
-      <div className="battlefield-frame"><div className="battlefield" onDragOver={(event) => event.preventDefault()} onDrop={(event) => battlefield && dropZone(event, battlefield.zoneId)}>
+      <div className="battlefield-frame"><div className={`battlefield ${opponentPerspective ? 'opponent-perspective' : ''}`} style={battlefieldStyle} onDragOver={(event) => event.preventDefault()} onDrop={(event) => battlefield && dropZone(event, battlefield.zoneId)}>
         <div className="battle-grid" aria-hidden="true" />
         {(battlefield?.cards ?? []).map((card) => renderCard(card, { className: 'battle-card' }))}
       </div></div>

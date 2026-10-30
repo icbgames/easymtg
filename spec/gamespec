@@ -839,6 +839,8 @@ sideboard
 
 ゲーム体験に関する初期UI方針は以下のとおりとする。スマートフォン対応は行わず、PC操作を対象とする。対戦画面は左に双方のLife / Zone、中央に相手と自分のHandおよびBattlefield、右に操作・システムログを置く3カラム構成とする。Handは横スクロール、BattlefieldはGridとし、カード幅はBattlefield 120px、Hand 100pxを目安に画像の縦横比を保つ。タップしたカードは左へ90度回転する。Battlefieldは(0,0)を左上とし、xは右、yは下へ増加する。負座標は許可せず、カードの重なりを許容する。自動配置は左上から8列をrow-major順に探索する。
 
+各Playerの画面では、自分の視点がBattlefieldの下側になるよう、Player順が2番目の視点はBattlefield全体を180度回転して表示する。Battlefield上のカードは自分がControllerのものを正立、対戦相手がControllerのものを180度回転して表示する。タップ状態のカードはそれぞれの視点に対して左へ90度回転し、ホバー表示でもタップ状態の向きを維持する。Battlefield上でカードをドラッグして別の位置へ移動できる。
+
 左Zone列は相手を上、自分を下に置く。Libraryは山札と枚数、Graveyard / Exileは枚数と一番上のカードを表示する。相手の非公開Zoneは枚数のみとし、権限のあるZoneを選ぶとGridモーダルで閲覧する。右側のSystem logは時系列で表示し、相手向けにマスクされた内容を使ってカード識別情報を漏らさない。
 
 Life変更は+1 / +5 / -1 / -5の4ボタンとし、amount=0は不正とする。カード画像が取得できない場合はplaceholder、通常の裏面画像はEasyMTG表記の共通デザインを使用する。各Zoneの表示、Context menu、ドラッグ＆ドロップの初期操作、再接続表示はPhase 8で実装する。

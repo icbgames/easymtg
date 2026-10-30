@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App.js';
 import './style.css';
+import './battlefield.css';
 
 class MockWebSocket extends EventTarget {
   static OPEN = 1;
@@ -142,6 +143,83 @@ describe('browser UI', () => {
     expect(lifeButton).toBeDefined();
     await act(async () => { lifeButton!.click(); });
     expect(MockWebSocket.instances[0]?.sent).toContainEqual(expect.objectContaining({ type: 'ChangeLife', payload: { amount: 5 } }));
+  });
+
+  it('keeps battlefield perspective, card orientation, and intra-battlefield dragging consistent', async () => {
+    const playerId = 'player-two';
+    const opponentId = 'player-one';
+    const room = { roomId: 'room-one', status: 'IN_MATCH', ownerPlayerId: opponentId, matchId: 'match-one', participants: [
+      { playerId: opponentId, connectionState: 'CONNECTED' }, { playerId, connectionState: 'CONNECTED' },
+    ] };
+    const ownCard = {
+      cardId: 'own-card', cardDefinitionId: 'ABC123', cardDefinitionVersion: 1,
+      ownerPlayerId: playerId, controllerPlayerId: playerId, tapped: true, faceDown: false,
+      position: { x: 1, y: 0 }, counters: { plusOnePlusOne: 0, other: 0 },
+    };
+    const opponentCard = {
+      cardId: 'opponent-card', cardDefinitionId: 'DEF123', cardDefinitionVersion: 1,
+      ownerPlayerId: opponentId, controllerPlayerId: opponentId, tapped: false, faceDown: false,
+      position: { x: 2, y: 0 }, counters: { plusOnePlusOne: 0, other: 0 },
+    };
+    const zoneTypes = ['LIBRARY', 'HAND', 'GRAVEYARD', 'EXILE', 'SIDEBOARD'] as const;
+    const zones = [
+      ...[playerId, opponentId].flatMap((ownerPlayerId) => zoneTypes.map((type) => ({ zoneId: `${ownerPlayerId}-${type}`, type, ownerPlayerId, cards: [] }))),
+      { zoneId: 'battlefield', type: 'BATTLEFIELD', ownerPlayerId: null, cards: [ownCard, opponentCard] },
+    ];
+    const gameStateView = {
+      gameId: 'game-one', matchId: 'match-one', status: 'PLAYING', turnNumber: 1, activePlayerId: playerId,
+      phase: 'BEGINNING', step: 'UNTAP', sequence: 0,
+      players: [{ playerId: opponentId, life: 20 }, { playerId, life: 20 }], zones,
+    };
+    activeGameMessage = { type: 'MatchStateSync', match: { matchId: 'match-one', status: 'ACTIVE', currentGameNumber: 1, activeGameId: 'game-one' } };
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/rooms/current') return jsonResponse({ room, playerId, selectedDeckId: 'deck-one' });
+      if (url === '/api/decks') return jsonResponse([]);
+      if (url === '/api/rooms/current/game-state') return jsonResponse({ game: { gameId: 'game-one', sequence: 0, gameStateView } });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<App />); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    const battlefield = host.querySelector<HTMLElement>('.battlefield');
+    expect(battlefield?.classList.contains('opponent-perspective')).toBe(true);
+    const ownTile = host.querySelector<HTMLButtonElement>('[aria-label="ABC123"]');
+    const opponentTile = host.querySelector<HTMLButtonElement>('[aria-label="DEF123"]');
+    expect(ownTile?.classList.contains('tapped')).toBe(true);
+    expect(ownTile?.style.getPropertyValue('--card-rotation')).toBe('90deg');
+    expect(opponentTile?.style.getPropertyValue('--card-rotation')).toBe('0deg');
+
+    const storedData = new Map<string, string>();
+    const dataTransfer = {
+      effectAllowed: 'all',
+      setData: (type: string, value: string) => storedData.set(type, value),
+      getData: (type: string) => storedData.get(type) ?? '',
+    };
+    const dragStart = new Event('dragstart', { bubbles: true });
+    Object.defineProperty(dragStart, 'dataTransfer', { value: dataTransfer });
+    await act(async () => { ownTile!.dispatchEvent(dragStart); });
+    const rect = { left: 0, top: 0, right: 1152, bottom: 380, width: 1152, height: 380, x: 0, y: 0, toJSON: () => ({}) };
+    battlefield!.getBoundingClientRect = () => rect as DOMRect;
+    Object.defineProperties(battlefield, {
+      scrollWidth: { configurable: true, value: 1152 },
+      scrollHeight: { configurable: true, value: 380 },
+    });
+    const drop = new Event('drop', { bubbles: true });
+    Object.defineProperties(drop, {
+      dataTransfer: { value: dataTransfer },
+      clientX: { value: 200 },
+      clientY: { value: 100 },
+    });
+    await act(async () => { battlefield!.dispatchEvent(drop); });
+    expect(MockWebSocket.instances[0]?.sent).toContainEqual(expect.objectContaining({
+      type: 'MoveCardPosition',
+      payload: { cardId: 'own-card', position: { x: 6, y: 1 } },
+    }));
   });
 
   it('does not refresh a Game after its Concede event has retired it', async () => {

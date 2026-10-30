@@ -1,0 +1,13 @@
+.battlefield.opponent-perspective {
+  transform: rotate(180deg);
+  transform-origin: center;
+}
+
+.card-tile.battle-card {
+  --card-rotation: 0deg;
+  transform: rotate(var(--card-rotation));
+}
+
+.card-tile.battle-card:hover:not(:disabled) {
+  transform: rotate(var(--card-rotation)) translateY(-3px);
+}
